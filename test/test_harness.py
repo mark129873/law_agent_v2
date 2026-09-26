@@ -150,9 +150,11 @@ def test_todo_manager_update_and_render():
     assert harness.run_todo_write([{"content": "", "status": "pending"}]).startswith("Error")
     assert harness.run_todo_write([{"content": "x", "status": "done"}]).startswith("Error")
     assert harness.run_todo_write([{"content": "x", "status": "pending"}] * 21).startswith("Error")
-    # 字符串形式的列表也能解析(s05 的兼容行为)
+    # 字符串形式的列表也能解析(s05 的两级兜底: json 失败 -> ast.literal_eval)
     out = harness.run_todo_write('[{"content": "json todo", "status": "pending"}]')
     assert "[ ] json todo" in out
+    out = harness.run_todo_write("[{'content': 'repr todo', 'status': 'pending'}]")
+    assert "[ ] repr todo" in out
 
 
 # ---- Skill Loading ----

@@ -9,28 +9,28 @@ harness.py - 单文件通用助手 Harness
             delete_file(移入 rubbish/) / todo_write / load_skill / subtask(子助手)
 
 九个机制各自的实现(括号 = 代码所在分区):
-    1. Agent Loop      agent_loop 的 while True: 调模型,无 tool_use 即停,  错误也作为 tool_result 喂回,不抛异常打断循环
+    1. Agent Loop      agent_loop 的 while True: 调模型,无 tool_use 即停,   错误也作为 tool_result 喂回,不抛异常打断循环
                        有则执行工具并把 tool_result 回填继续(§10)
-    2. Tool Use        TOOLS 存给模型看的 schema,TOOL_HANDLERS 是          文件操作全部先过 safe_path 沙箱
+    2. Tool Use        TOOLS 存给模型看的 schema,TOOL_HANDLERS 是           文件操作全部先过 safe_path 沙箱
                        名字->函数的 dispatch map,execute_tool 统一
                        拦截 -> 分发 -> 兜异常(§2)
-    3. Permission      permission_hook 三道闸门: 禁止清单硬拒 /            词表 = sudo 等; 删除词分平台; chmod 777 等 5 个确认词
+    3. Permission      permission_hook 三道闸门: 禁止清单硬拒 /              词表 = sudo 等; 删除词; chmod 777 等 5 个确认词
                        越界与 shell 删除硬拒 / 高危命令 [y/N] 确认;
                        拒绝原因作为 tool_result 喂回模型(§4)
-    4. Hooks           UserPromptSubmit / PreToolUse / PostToolUse /       Pre = 权限+日志; Post = 大输出告警; Stop = 计数; Submit 无注册
+    4. Hooks           UserPromptSubmit / PreToolUse / PostToolUse /      Pre = 权限+日志; Post = 大输出告警; Stop = 计数; Submit 无注册
                        Stop 四个事件点挂回调,trigger_hooks 里第一个
                        返回非 None 的回调生效(§3)
-    5. Task System     TodoManager 内存任务板,todo_write 全量替换,         渲染 [ ]/[>]/[x] 面板; 单 in_progress; 上限 20 条
+    5. Task System     TodoManager 内存任务板,todo_write 全量替换,           渲染 [ ]/[>]/[x] 面板; 单 in_progress; 上限 20 条
                        3 轮未更新就在工具结果里注入提醒(§5)
-    6. Subagents       subtask(prompt) 用全新 messages 跑 30 轮独立循环,   子助手仅 6 个基础工具,无 subtask 防递归
+    6. Subagents       subtask(prompt) 用全新 messages 跑 30 轮独立循环,     子助手仅 6 个基础工具,无 subtask 防递归
                        最终文本作 tool_result 返回父级;
                        同一响应里的多个 subtask 严格串行(§7)
-    7. Context Compact ContextCompactor 四级漏斗: 新结果落盘留预览 ->      归档 .transcripts/ 与 .task_outputs/; 重试 1 次
+    7. Context Compact ContextCompactor 四级压缩: 新结果落盘留预览 ->         归档 .transcripts/ 与 .task_outputs/; 重试 1 次
                        中间历史归档 -> 旧结果缩短 -> LLM 摘要重写;
                        真实 token 计量,占窗口 80% 触发,压到 60%(§8)
-    8. Skill           启动扫描 skills/*/SKILL.md,system prompt 只放       frontmatter 只取 name/description 两字段
+    8. Skill           启动扫描 skills/*/SKILL.md,system prompt 只放        frontmatter 只取 name/description 两字段
                        "名称 + 描述"目录,load_skill 按需取全文(§6)
-    9. Goal Loop       /goal 后模型每次想停,由无工具的独立判断器裁定       max_tokens=512; 连续 8 次收口; error 不计数
+    9. Goal Loop       /goal 后模型每次想停,由无工具的独立判断器裁定             max_tokens=512; 连续 8 次收口; error 不计数
                        JSON {ok, reason, impossible}; 未达成注入理由
                        自动续轮,连续 8 次未放行收口交还用户(§9)
 
@@ -50,6 +50,7 @@ harness.py - 单文件通用助手 Harness
 
 from __future__ import annotations
 
+import ast
 import glob
 import json
 import os
@@ -417,12 +418,16 @@ class TodoManager:
     def __init__(self):
         self.items: list[dict] = []
 
-    def update(self, todos) -> str:
+    def update(self, todos: list | str) -> str:
         if isinstance(todos, str):  # 兼容模型把列表当字符串传
             try:
                 todos = json.loads(todos)
-            except json.JSONDecodeError as e:
-                raise ValueError("todos must be a list or JSON array string") from e
+            except json.JSONDecodeError:
+                try:
+                    todos = ast.literal_eval(todos)
+                except (SyntaxError, ValueError) as e:
+                    raise ValueError(
+                        "todos must be a list or JSON array string") from e
         if not isinstance(todos, list):
             raise ValueError("todos must be a list")
         if len(todos) > 20:
@@ -452,7 +457,7 @@ class TodoManager:
         marker = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
         lines = [f"{marker[t['status']]} {t['content']}" for t in self.items]
         done = sum(t["status"] == "completed" for t in self.items)
-        lines.append(f"({done}/{len(self.items)} completed)")
+        lines.append(f"\n({done}/{len(self.items)} completed)")
         return "\n".join(lines)
 
 
@@ -482,7 +487,7 @@ TODO_TOOL = {
 }
 
 
-def run_todo_write(todos) -> str:
+def run_todo_write(todos: list | str) -> str:
     """全量替换内存任务板, 打印并返回渲染后的任务面板."""
     try:
         output = TODO.update(todos)
