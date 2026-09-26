@@ -9,19 +9,9 @@ Unix/PowerShell 两套拦截规则、todo 毫秒时间戳落盘、技能解析�
 本身只含运行所需代码。
 
 运行方式：
-    uv run test/test_harness.py           # 推荐：按下方脚本元数据自动装依赖
-    pytest test/                          # 依赖已就绪的环境里也可用 pytest
+    uv run pytest test/                   # 项目环境（推荐）
+    uv run test/test_harness.py           # 也可以直接运行本文件
 """
-
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "anthropic",
-#     "python-dotenv",
-#     "pyyaml",
-#     "pytest",
-# ]
-# ///
 
 from __future__ import annotations
 

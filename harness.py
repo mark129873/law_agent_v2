@@ -40,25 +40,15 @@ harness.py — 单文件通用助手 Harness
        它把目标移动到 rubbish/ 而不是销毁。
 
 用法：
+    uv sync                               # 首次或依赖变更后：创建 .venv 并按 uv.lock 安装
     uv run harness.py                     # 交互 REPL；输入任务直接执行，/goal <条件> 进入目标模式
 
 测试（不调用 API，验证沙箱/拦截/删除/压缩等关键约束）：
-    uv run test/test_harness.py           # 按测试文件头部元数据自动装依赖
-    pytest test/                          # 依赖已就绪的环境里也可用 pytest
+    uv run pytest test/                   # 或：uv run test/test_harness.py
 
-依赖：uv run 按下方脚本元数据自动安装；手动 pip 用户：
-    pip install anthropic python-dotenv pyyaml（Python 3.10+）
+依赖：由 pyproject.toml 声明（Python 3.10+），uv 自动安装
 配置：复制 .env.example 为 .env，填写 ANTHROPIC_API_KEY 与 MODEL_ID
 """
-
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "anthropic",
-#     "python-dotenv",
-#     "pyyaml",
-# ]
-# ///
 
 from __future__ import annotations
 
