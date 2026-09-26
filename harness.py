@@ -116,11 +116,12 @@ CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "1000000"))
 # 显式读取 key 并传给 SDK, 而不是依赖 SDK 的环境变量约定:
 # 缺 key 时能在启动期给出明确提示, 而不是第一次对话时才收到 401 裸报错
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "")
 MODEL = os.getenv("MODEL_ID", "")
 
 # key 缺失时用占位符构造, 保证模块可导入; 真正调用前 main() 会拦截并提示
 client = Anthropic(api_key=ANTHROPIC_API_KEY or "not-configured",
-                   base_url=os.getenv("ANTHROPIC_BASE_URL"))
+                   base_url=ANTHROPIC_BASE_URL)
 
 MAX_TOKENS = 8000          # 每次模型调用的输出上限
 BASH_TIMEOUT = 120         # shell 命令超时秒数
@@ -1325,7 +1326,9 @@ def repl() -> None:
 
 def main() -> None:
     missing = [name for name, value in
-               (("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY), ("MODEL_ID", MODEL)) if not value]
+               (("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY),
+                ("ANTHROPIC_BASE_URL", ANTHROPIC_BASE_URL),
+                ("MODEL_ID", MODEL)) if not value]
     if missing:
         sys.exit(f"{' 与 '.join(missing)} 未配置: 复制 .env.example 为 .env 并填写")
     repl()
