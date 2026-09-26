@@ -1,37 +1,17 @@
 #!/usr/bin/env python3
 """
-harness.py — 单文件 Agent Harness（参考 learn-claude-code 课程实现）
+harness.py — 单文件通用助手 Harness
 
-    用户输入
-        |
-        v
-    +---------------------------- Agent 主循环 ---------------------------+
-    |  1. 上下文压缩（四级漏斗，超阈值才逐级下沉）                          |
-    |  2. LLM 调用（MODEL_ID，Anthropic 兼容端点）                          |
-    |  3. 响应里没有 tool_use？                                             |
-    |        是 -> goal 闸门（仅 /goal 模式）或结束                          |
-    |        否 -> PreToolUse hooks（强制权限）-> 工具执行 -> PostToolUse    |
-    |              tool_result 回填 -> 回到 1                                |
-    +----------------------------------------------------------------------+
+    用户输入 -> 压缩 -> LLM -> 有 tool_use ? -> 权限 hooks -> 工具 -> 回填
+                                | 否：/goal 模式过目标闸门，否则结束
 
     工具池: bash / read_file / write_file / edit_file / glob /
-            delete_file(移入 rubbish/) / todo_write / load_skill / task(子agent)
+            delete_file(移入 rubbish/) / todo_write / load_skill / task(子助手)
 
-复用来源（learn-claude-code 各章 code.py）：
-    §2 工具层   <- s02_tool_use
-    §3 hooks    <- s04_hooks
-    §4 权限     <- s03_permission（强化为"强制"语义）
-    §5 todo     <- s05/s10 的简化：全量重写式，落盘 .task/
-    §6 skills   <- s07_skill_loading
-    §7 subagent <- s06_subagent（多 task 调用严格串行）
-    §8 压缩     <- s08_context_compact（四级漏斗）+ 真实 token 计量与结构化摘要
-    §9 判断器   <- s17_goal_loop（去掉 asyncio）
-    §10 主循环  <- s01 骨架 + s08 压缩接入 + s17 闸门
-
-硬性约束（本 harness 的设计要求）：
+硬性约束：
     1. 所有文件操作必须在项目根目录（启动目录）内，越界一律拒绝；
-    2. 一切删除都被禁止 —— shell 里的删除命令被硬拦截，
-       唯一删除通道是 delete_file 工具，它把目标移动到 rubbish/ 而不是销毁。
+    2. shell 删除命令一律拦截，唯一删除通道是 delete_file，
+       它把目标移动到 rubbish/ 而不是销毁。
 
 用法：
     uv run harness.py                     # 交互 REPL；输入任务直接执行，/goal <条件> 进入目标模式
@@ -84,12 +64,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 
-# ===========================================================================
-# §0 配置与启动
-# 加载 .env、创建 API 客户端、确定项目根目录与平台 shell。
-# harness 的一切约束都以"项目根目录"为锚点：启动时所在目录
-#   即项目，此后所有路径检查、工具 cwd、落盘目录都相对它展开。
-# ===========================================================================
+# ============================== §0 配置 ==============================
 
 load_dotenv(override=True)
 # 设置了兼容端点时清掉 AUTH_TOKEN，避免 SDK 同时带上两套凭证造成 401
@@ -97,8 +72,7 @@ if os.getenv("ANTHROPIC_BASE_URL"):
     os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
 
 if os.name == "nt":
-    # 让老式 Windows 控制台启用 ANSI 转义（Windows Terminal 无需）。
-    # 后面大量用 \033[...m 着色，不启用会打印出乱码控制符。
+    # 让老式 Windows 控制台启用 ANSI 转义，否则后面的着色会打成乱码
     os.system("")
 
 IS_WINDOWS = os.name == "nt"
@@ -108,11 +82,9 @@ RUBBISH_DIR = PROJECT_ROOT / "rubbish"                 # 所有"删除"的最终
 TASK_DIR = PROJECT_ROOT / ".task"                      # todo_write 的落盘目录
 TRANSCRIPT_DIR = PROJECT_ROOT / ".transcripts"         # 压缩归档的历史
 TOOL_RESULTS_DIR = PROJECT_ROOT / ".task_outputs" / "tool-results"  # 大输出归档
-SKILLS_DIR = PROJECT_ROOT / "skills"                   # 技能目录（s07 约定）
+SKILLS_DIR = PROJECT_ROOT / "skills"                   # 技能目录
 
-# 按平台选择 shell：Windows 用 PowerShell，其余用 bash。
-# 两类 shell 的语法与内建命令完全不同，权限拦截规则也必须
-#   分两套写；用列表形式传参避免再经过一层 cmd.exe 转义。
+# Windows 用 PowerShell、其余用 bash；§4 的拦截规则也按此分两套
 SHELL = ["powershell", "-NoProfile", "-Command"] if IS_WINDOWS else ["bash", "-c"]
 
 # 上下文窗口大小：压缩阈值按它的百分比计算（DeepSeek 默认 1M，按模型改 .env）
@@ -121,7 +93,7 @@ CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "1000000"))
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.getenv("MODEL_ID", "")
 
-MAX_TOKENS = 8000          # 每次模型调用的输出上限（沿用课程约定）
+MAX_TOKENS = 8000          # 每次模型调用的输出上限
 BASH_TIMEOUT = 120         # shell 命令超时秒数
 
 if READLINE_AVAILABLE:
@@ -141,17 +113,13 @@ ROUND_TS: str | None = None  # 本轮对话开始的时间戳，todo_write 用�
 
 
 def new_round() -> None:
-    """每轮用户输入开始时固定一次时间戳。
-    同一轮里多次 todo_write 要重写同一个文件（全量重写语义），
-    文件名必须取轮次开始时刻而不是每次调用的时刻。"""
+    """固定本轮时间戳：todo_write 文件名取轮次开始时刻，同轮重写同一文件。"""
     global ROUND_TS
     ROUND_TS = ts_millis()
 
 
 def extract_text(content) -> str:
-    """从响应 content 块列表中只挑 text 块拼成字符串。
-    content 里可能混有 tool_use 等非文本块；子 agent 与
-    goal 判断器都只要"最终那句话"，逐块 getattr 也天然跳过未知块类型。"""
+    """只挑 text 块拼成字符串（跳过 tool_use 等非文本块）。"""
     if not isinstance(content, list):
         return str(content)
     return "\n".join(
@@ -161,32 +129,20 @@ def extract_text(content) -> str:
     ).strip()
 
 
-# ===========================================================================
-# §1 路径沙箱
-# 把任意输入路径解析为项目内的绝对路径，越界直接抛错。
-# "所有操作必须在项目内"是硬性要求：绝对路径注入（/etc、
-#   C:\Windows）与 .. 回溯都在 (PROJECT_ROOT / p).resolve() 之后用
-#   is_relative_to 统一拦截；文件工具与权限层共用这一把尺子。
-# ===========================================================================
+# ======================== §1 路径沙箱：越界即抛错 ====================
 
 def safe_path(p: str) -> Path:
+    """解析为项目内绝对路径；越出项目根即抛错。"""
     path = (PROJECT_ROOT / p).resolve()
     if not path.is_relative_to(PROJECT_ROOT):
         raise ValueError(f"Path escapes the project: {p}")
     return path
 
 
-# ===========================================================================
-# §2 工具层（复用 s02_tool_use，另加 delete_file）
-# 定义 6 个基础工具的实现。所有 handler 约定：出错返回
-#   "Error: ..." 字符串而不是抛异常 —— 错误也是给模型看的反馈，
-#   让它自行调整策略，绝不让异常打断主循环。
-# ===========================================================================
+# ========== §2 工具层：出错返回 "Error: ..." 字符串，不打断主循环 ==========
 
 def run_bash(command: str) -> str:
-    """在项目根目录里执行 shell 命令，返回 exit_code + 输出尾部。
-    cwd 固定为项目根，从源头限制相对路径的作用域；输出保留
-    尾部 30000 字符（s17 的做法）——排错时最关键的报错信息通常在末尾。"""
+    """在项目根目录执行 shell 命令；输出保留尾部——报错通常在末尾。"""
     try:
         result = subprocess.run(
             [*SHELL, command], cwd=PROJECT_ROOT,
@@ -228,8 +184,7 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         file_path = safe_path(path)
         text = file_path.read_text(encoding="utf-8")
         count = text.count(old_text)
-        # 要求恰好出现一次（s17 的严格版）：命中 0 次说明
-        # old_text 写错，命中多次说明替换有歧义，两种情况都拒绝更安全。
+        # 恰好出现一次才替换：0 次是 old_text 写错，多次是有歧义
         if count != 1:
             return f"Error: Expected 1 occurrence, found {count}"
         file_path.write_text(text.replace(old_text, new_text), encoding="utf-8")
@@ -254,10 +209,7 @@ def run_glob(pattern: str) -> str:
 
 
 def run_delete_file(path: str) -> str:
-    """唯一的删除通道：把目标移动到 rubbish/<毫秒时间戳>_<名字>。
-    要求"所有删除操作改为移动到 rubbish"——移动可撤销、
-    留痕；时间戳前缀防止同名覆盖；项目根与 rubbish 自身被显式保护，
-    避免把安全网本身删掉。"""
+    """删除的唯一实现：移动到 rubbish/<毫秒时间戳>_<名字>，可撤销留痕。"""
     try:
         target = safe_path(path)
         if target == PROJECT_ROOT:
@@ -307,15 +259,7 @@ BASE_HANDLERS = {
 }
 
 
-# ===========================================================================
-# §3 Hooks（复用 s04_hooks）
-# 在主循环的固定事件点上挂回调：UserPromptSubmit / PreToolUse /
-#   PostToolUse / Stop。trigger_hooks 按注册顺序执行，第一个返回非 None 的
-#   回调短路后续并把返回值作为结果 —— PreToolUse 里返回字符串即拦截本次
-#   工具调用，Stop 里返回字符串则作为 user 消息注入强制续轮。
-# 控制反转：主循环只认事件点，权限、日志等策略全部可插拔，
-#   扩展时不必改循环本身。
-# ===========================================================================
+# ============ §3 Hooks：固定事件点挂回调，返回非 None 即拦截/注入 ============
 
 HOOKS = {"UserPromptSubmit": [], "PreToolUse": [], "PostToolUse": [], "Stop": []}
 
@@ -325,6 +269,7 @@ def register_hook(event: str, callback) -> None:
 
 
 def trigger_hooks(event: str, *args):
+    """按注册顺序执行；第一个返回非 None 的回调短路后续，返回值即结果。"""
     for callback in HOOKS[event]:
         result = callback(*args)
         if result is not None:
@@ -332,25 +277,16 @@ def trigger_hooks(event: str, *args):
     return None
 
 
-# ===========================================================================
-# §4 权限层（复用 s03_permission，按需求强化为"强制"语义）
-# 三道闸门：
-#     Gate 1  deny list          —— 命中即硬拒，无申诉
-#     Gate 2  强制规则           —— 越界 / shell 删除 / 越界写，命中即硬拒
-#     Gate 3  询问规则           —— 高危但不违规的命令，交互确认 [y/N]
-# 需求明确"强制要求所有操作必须在项目内、删除改为移动到
-#   rubbish"：所以 Gate 2 不询问直接拒绝，拒绝原因作为 tool_result 喂回
-#   模型让它改道。注意边界：文件工具是硬沙箱（路径运算保证）；shell 是
-#   教学级规则拦截 —— 常见越界/删除形态会被抓住，但不构成安全边界。
-# ===========================================================================
+# ============================== §4 权限层 ============================
+# 文件工具是硬沙箱；shell 是规则拦截（教学级，非安全边界）。
+# 拒绝原因作为 tool_result 喂回模型，让它自行改道。
 
 # Gate 1：无论什么平台都不允许出现的命令片段
 DENY_LIST = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", "dd if=",
              "> /dev/sda", "format ", "diskpart"]
 
-# Gate 2a：删除命令 —— 按平台分两套。
-# 匹配限定在"命令位置"（行首或 ;&|() 换行 之后），避免 model / delimiter
-# 这类单词误报（s03 验证过的写法）。
+# 删除命令按平台分两套；只匹配"命令位置"（行首或 ;&|() 换行之后），
+# 避免 model / delimiter 这类单词误报
 DELETE_WORD_UNIX = re.compile(
     r"(?im)(?:^|[;&|()\n])\s*(?:rm|rmdir|unlink|shred)(?=\s|$|[;&|()])")
 DELETE_FIND_UNIX = re.compile(r"(?im)\bfind\b[^;&|()\n]*\s-delete\b")
@@ -358,9 +294,8 @@ DELETE_FIND_UNIX = re.compile(r"(?im)\bfind\b[^;&|()\n]*\s-delete\b")
 DELETE_WORD_WIN = re.compile(
     r"(?im)(?:^|[;&|\n])\s*(?:remove-item|ri|del|erase|rd|rm)(?=\s|$|[;&|])")
 
-# Gate 2b：越界写 —— 重定向到绝对路径、复制/移动到绝对路径、cd 出项目。
-# shell 的 cwd 已固定为项目根，模型想写项目内文件用相对路径即可，
-# 因此出现绝对路径写目标一律视为越界（/dev/null 除外）。
+# 越界写：cwd 已固定为项目根，写项目内文件用相对路径即可，
+# 因此出现绝对路径写目标一律视为越界（/dev/null 除外）
 OUTSIDE_WRITE_UNIX = [
     re.compile(r"(?m)>>?\s*/(?!dev/null)"),
     re.compile(r"(?m)>>?\s*~"),
@@ -408,8 +343,7 @@ def permission_hook(block):
                 return f"已拒绝：命令命中禁止清单 '{pattern}'"
         if match_delete_command(command, IS_WINDOWS):
             print("\n\033[31m[拦截] 试图通过 shell 删除\033[0m")
-            # 不替模型改写命令，而是引导它走受控通道
-            # delete_file —— 改写 shell 命令容易误判，拦截 + 提示更可靠。
+            # 拦截而不是改写命令：改写 shell 容易误判
             return ("已拦截 shell 删除操作。请改用 delete_file 工具："
                     "它会把目标移动到 rubbish/，而不是销毁。")
         if match_outside_write(command, IS_WINDOWS):
@@ -421,7 +355,7 @@ def permission_hook(block):
             print(f"   bash({command[:120]})")
             try:
                 allowed = input("   允许执行? [y/N] ").strip().lower() in ("y", "yes")
-            except EOFError:  # 非交互场景（管道/一次性模式）默认拒绝
+            except EOFError:  # 非交互场景默认拒绝
                 allowed = False
             if not allowed:
                 return "用户拒绝授权"
@@ -430,8 +364,7 @@ def permission_hook(block):
         path = str(args.get("path", ""))
         try:
             safe_path(path)
-        except ValueError:
-            # 路径越界属于"强制"范畴：硬拒，不询问
+        except ValueError:  # 强制范畴：硬拒，不询问
             print("\n\033[31m[拦截] 路径越出项目范围\033[0m")
             return f"路径越出项目范围，已拒绝：{path}"
     return None
@@ -445,7 +378,7 @@ def log_hook(block):
 
 
 def large_output_hook(block, output):
-    """PostToolUse：超大输出告警（s04 原样保留）。"""
+    """PostToolUse：超大输出告警。"""
     if len(str(output)) > 100000:
         print(f"\033[33m[hook] 超大输出 "
               f"{getattr(block, 'name', '?')}: {len(str(output))} 字符\033[0m")
@@ -469,15 +402,7 @@ register_hook("PostToolUse", large_output_hook)
 register_hook("Stop", stop_summary_hook)
 
 
-# ===========================================================================
-# §5 Task System 简化版（todo_write，全量重写式）
-# 给模型一个 todo_write 工具：每次调用传完整任务列表，整体覆盖
-#   写入 .task/task_<轮次开始毫秒时间戳>.json。
-# 全量重写（TodoWrite 语义）让模型无需管理任务 ID——不需要
-#   先 create 拿 ID 再 update 两步走；重复调用天然幂等，文件始终是"当前
-#   完整计划"。文件名取轮次开始时刻，同轮多次调用重写同一文件，一轮一个
-#   快照，人直接看 JSON 就能复盘这轮的计划与进度。
-# ===========================================================================
+# ==== §5 todo_write：每次传完整列表整体覆盖，文件名 = 轮次开始时间戳 ====
 
 TODO_STATUSES = ("pending", "in_progress", "completed")
 
@@ -507,6 +432,7 @@ TODO_TOOL = {
 
 
 def run_todo_write(todos: list) -> str:
+    """整体覆盖写 .task/task_<轮次开始毫秒时间戳>.json。"""
     try:
         if not isinstance(todos, list) or not todos:
             return "Error: todos must be a non-empty array of {subject, description?, status?}"
@@ -534,14 +460,7 @@ def run_todo_write(todos: list) -> str:
         return f"Error: {e}"
 
 
-# ===========================================================================
-# §6 Skill Loading（复用 s07_skill_loading）
-# 启动时扫描 skills/*/SKILL.md，解析 YAML frontmatter 里的
-#   name/description；system prompt 只放"名称 + 描述"目录，模型调用
-#   load_skill(name) 时才注入完整正文。
-# 按需加载省上下文：模型先知道"有什么"，需要时再拉全文，
-#   而不是把所有技能全文塞进每一条 system prompt。
-# ===========================================================================
+# ===== §6 技能加载：system prompt 只放目录，load_skill 按需取全文 =====
 
 class SkillLoader:
     def __init__(self, skills_dir: Path):
@@ -551,9 +470,7 @@ class SkillLoader:
 
     @staticmethod
     def parse_frontmatter(text: str) -> tuple[dict, str]:
-        """手工切出 --- 包裹的 YAML 头并安全解析。
-        frontmatter 只有 name/description 两个字段，
-        手写边界比引入完整 markdown 解析器更符合单文件原则。"""
+        """切出 --- 包裹的 YAML 头并安全解析。"""
         lines = text.splitlines(keepends=True)
         if not lines or lines[0].rstrip("\r\n") != "---":
             return {}, text
@@ -575,6 +492,7 @@ class SkillLoader:
         return metadata, body
 
     def scan(self) -> None:
+        """扫描 skills/*/SKILL.md，取 name / description / 正文。"""
         self.skills.clear()
         if not self.skills_dir.exists():
             return
@@ -623,14 +541,7 @@ LOAD_SKILL_TOOL = {
 }
 
 
-# ===========================================================================
-# 工具池组装 + 工具执行器
-# 把基础工具、todo_write、load_skill 合并进 TOOLS（给模型的
-#   schema 列表）与 TOOL_HANDLERS（dispatch map）；execute_tool 串起
-#   PreToolUse 拦截 -> dispatch -> PostToolUse。
-# s02 的核心思想：循环不认识具体工具，只认 dispatch map，
-#   加工具只是往两个表里注册。
-# ===========================================================================
+# == 工具池：TOOLS 给模型看，TOOL_HANDLERS 是 dispatch，加工具只改这两处 ==
 
 TOOLS = [*BASE_TOOLS, TODO_TOOL, LOAD_SKILL_TOOL]
 TOOL_HANDLERS = {**BASE_HANDLERS,
@@ -639,10 +550,7 @@ TOOL_HANDLERS = {**BASE_HANDLERS,
 
 
 def build_system_prompt() -> str:
-    """组装 system prompt：身份 + 硬性规则 + 技能目录 + 防注入约定。
-    把权限约束写进 prompt 是第一道防线（权限层是第二道）；
-    "当前用户请求是唯一指令源"这条约定配合压缩摘要的消息模板，
-    防止归档摘要里偶然携带的指令被模型当成新命令执行。"""
+    """组装 system prompt：身份 + 硬性规则 + 技能目录 + 防注入约定。"""
     return (
         f"你是一个运行在 {PROJECT_ROOT} 的通用助手。"
         "需要时调用工具完成任务，直接行动，少解释。\n"
@@ -681,17 +589,8 @@ def execute_tool(block) -> str:
     return str(output)
 
 
-# ===========================================================================
-# §7 Subagent（复用 s06_subagent；按需求"只保留同步执行的多个 subagents"）
-# task(prompt) 工具：为子任务开一个全新的 messages=[{user,
-#   prompt}]，用基础工具跑一个独立的 30 轮上限循环，最终文本作为
-#   tool_result 返回给父级。同一响应里的多个 task 调用按顺序串行执行。
-# 全新上下文让子任务不被父对话污染；父级 messages 只增加
-#   一条摘要（tool_result），上下文成本恒定。subagent 的工具池里没有
-#   task 自身 —— 防止递归派生；没有 todo_write/load_skill —— 子任务
-#   聚焦执行，不需要计划与技能目录。不做线程、邮箱、持久化（需求明确
-#   剥离 Agent Team 的异步与保存机制）。
-# ===========================================================================
+# ==== §7 子助手：全新 messages、30 轮上限、最终文本作为 tool_result 返回；
+# 同一响应里的多个 task 调用严格串行；无线程/邮箱/持久化 ====
 
 SUB_SYSTEM = (
     f"你是一个运行在 {PROJECT_ROOT} 的通用助手。"
@@ -700,7 +599,7 @@ SUB_SYSTEM = (
 
 SUB_TOOLS = [tool for tool in TOOLS if tool["name"] in
              ("bash", "read_file", "write_file", "edit_file",
-              "glob", "delete_file")]
+              "glob", "delete_file")]  # 不含 task：防止递归派生
 SUB_HANDLERS = {name: TOOL_HANDLERS[name] for name in
                 ("bash", "read_file", "write_file", "edit_file",
                  "glob", "delete_file")}
@@ -709,6 +608,7 @@ SUBAGENT_MAX_TURNS = 30
 
 
 def run_subagent(prompt: str) -> str:
+    """全新 messages 跑独立循环，返回最终文本；与父级共用权限 hooks。"""
     print("\n\033[35m[子助手启动]\033[0m")
     messages = [{"role": "user", "content": prompt}]
 
@@ -731,7 +631,7 @@ def run_subagent(prompt: str) -> str:
 
         results = []
         for block in tool_calls:
-            output = execute_tool(block)   # 与父级共用同一套权限 hooks
+            output = execute_tool(block)
             print(f"  \033[90m[sub] {block.name}: {str(output)[:100]}\033[0m")
             results.append({"type": "tool_result", "tool_use_id": block.id,
                             "content": output})
@@ -755,21 +655,9 @@ TOOLS.append(TASK_TOOL)
 TOOL_HANDLERS["task"] = run_subagent
 
 
-# ===========================================================================
-# §8 Context Compact（复用 s08_context_compact 四级漏斗 + 真实 token 计量）
-# 每次调模型前跑 prepare()：
-#     1. tool_result_budget  最新一批 tool_result 超预算 -> 落盘留预览
-#     2. snip_compact        消息数超 50 -> 中间历史归档到 .transcripts/
-#     3. micro_compact       已消费的旧结果缩短为归档引用
-#        fit_tool_results    仍超限则把大结果换成 1000 字符预览
-#     4. compact_history     仍超限 -> LLM 生成结构化摘要，整体重写历史
-# 分级漏斗保证"能不摘要就不摘要"：便宜的字符串操作先上，
-#   最贵的 LLM 摘要兜底；所有被压缩的内容都有磁盘副本 + 可解析的引用标记
-#   （幂等，已是预览的内容不会重复落盘）。
-# 计量升级：优先用上一次响应的真实 usage.input_tokens 做基线（字符估算
-#   只在首轮兜底）—— 字符估 token 对中文误差很大，真实计量更准（Codex
-#   的做法）。阈值按窗口百分比：>=80% 触发，压到 60%。
-# ===========================================================================
+# ==== §8 上下文压缩：占窗口 >=80% 触发、压到 60%（COMPACT_* 常量） ====
+# prepare() 逐级下沉：新结果落盘留预览 -> 中间历史归档 -> 旧结果缩短
+# -> 仍超限才用 LLM 摘要重写历史；被压缩内容都有磁盘副本，可解析引用
 
 COMPACT_TRIGGER_TOKENS = int(CONTEXT_WINDOW_TOKENS * 0.8)
 COMPACT_TARGET_TOKENS = int(CONTEXT_WINDOW_TOKENS * 0.6)
@@ -777,8 +665,7 @@ MAX_REACTIVE_RETRIES = 1   # prompt_too_long 反应式压缩的重试上限
 
 
 class ContextCompactor:
-    # 内部字符串步骤（micro/fit）用"字符数"做停止条件即可 —— 它们只是
-    # "删够为止"的循环，字符口径自洽比绝对精度重要
+    # 内部步骤用字符数做停止条件即可：只是"删够为止"的循环
     TOOL_RESULT_BATCH_CHAR_LIMIT = 200000
     LARGE_RESULT_CHAR_LIMIT = 30000
     SUMMARY_INPUT_CHAR_LIMIT = 80000
@@ -803,9 +690,7 @@ class ContextCompactor:
         return len(json.dumps(messages, default=str, ensure_ascii=False))
 
     def estimate_tokens(self, messages: list) -> int:
-        """估算下一次模型调用的输入 token 量。
-        上一次的 input_tokens 反映的是几乎同一份消息列表，
-        只需补上"这之后新增内容的字符数 / 4"；首轮没有基线才退回纯字符估算。"""
+        """估算下次调用的输入 token：上次真实计量为基线 + 字符增量/4。"""
         chars = self.estimate_chars(messages)
         if self.last_input_tokens:
             growth = max(0, chars - self.chars_at_measure)
@@ -820,7 +705,7 @@ class ContextCompactor:
             self.last_input_tokens = input_tokens
             self.chars_at_measure = self.estimate_chars(messages)
 
-    # ---- 消息结构判断（s08 原样） ----
+    # ---- 消息结构判断 ----
 
     @staticmethod
     def block_type(block):
@@ -845,9 +730,8 @@ class ContextCompactor:
 
     @staticmethod
     def unseen_tool_result_positions(messages: list) -> set:
-        """找出模型还没看过的 tool_result（最后一条 assistant 之后）。
-        未读结果绝不能压缩 —— 压了模型就永远失去了这次工具
-        输出，API 也会因为 tool_use/tool_result 配对断裂而报错。"""
+        """找出模型还没看过的 tool_result：未读结果绝不压缩，
+        否则模型丢失该输出，且 tool_use/tool_result 配对断裂会报错。"""
         last_assistant = next(
             (index for index in range(len(messages) - 1, -1, -1)
              if messages[index].get("role") == "assistant"),
@@ -862,9 +746,10 @@ class ContextCompactor:
             if isinstance(block, dict) and block.get("type") == "tool_result"
         }
 
-    # ---- 落盘与预览（s08 原样） ----
+    # ---- 落盘与预览 ----
 
     def write_transcript(self, messages: list) -> Path:
+        """整份历史写入 .transcripts/ 下的 jsonl 档案，返回路径。"""
         self.transcript_dir.mkdir(parents=True, exist_ok=True)
         path = self.transcript_dir / f"transcript_{uuid.uuid4().hex}.jsonl"
         # open("x") 独占创建，归档永不覆盖旧档案
@@ -875,8 +760,7 @@ class ContextCompactor:
         return path
 
     def persisted_output_path(self, output: str) -> str | None:
-        """识别内容是否已经是"落盘预览"，是则取回真实归档路径。
-        幂等：重复压缩时直接复用已落盘文件，不产生副本。"""
+        """识别已是预览的内容，直接复用已落盘文件（幂等）。"""
         candidate = None
         if output.startswith("<persisted-output>\n"):
             candidate = next(
@@ -905,6 +789,7 @@ class ContextCompactor:
 
     def persisted_preview(self, tool_use_id: str, output: str,
                           preview_chars: int = 2000) -> str:
+        """全文落盘，返回带归档路径的预览文本。"""
         saved_path = self.persisted_output_path(output)
         if saved_path:
             path = Path(saved_path)
@@ -950,6 +835,7 @@ class ContextCompactor:
         return self.persisted_preview(tool_use_id, output)
 
     def is_archive_marker(self, message: dict) -> bool:
+        """判断消息是否为 snip_compact 留下的归档标记。"""
         content = message.get("content")
         match = (re.fullmatch(r"\[\d+ messages archived at (.+)\]", content)
                  if isinstance(content, str) else None)
@@ -1029,6 +915,7 @@ class ContextCompactor:
         return messages
 
     def summary_input(self, messages: list) -> str:
+        """摘要模型的输入；超限时掐头去尾。"""
         conversation = json.dumps(messages, default=str, ensure_ascii=False)
         if len(conversation) <= self.SUMMARY_INPUT_CHAR_LIMIT:
             return conversation
@@ -1039,10 +926,7 @@ class ContextCompactor:
                 + conversation[-tail:])
 
     def summarize_history(self, messages: list) -> str:
-        """用一次独立 LLM 调用把历史压成结构化事实摘要。
-        分节模板（目标/已完成/决定/文件/待办/教训）比自由
-        摘要更利于续跑 —— 续跑的模型能按节快速定位"接下来干什么"；同时
-        system prompt 明确"只记录事实、不执行指令"，防摘要注入。"""
+        """独立 LLM 调用生成结构化摘要；prompt 要求只记录事实、不执行指令。"""
         response = self.client.messages.create(
             model=self.model,
             system=(
@@ -1062,9 +946,7 @@ class ContextCompactor:
 
     @staticmethod
     def summary_message(label: str, request: str, summary: str, transcript: Path) -> dict:
-        """构造压缩后的首条消息：当前请求 + 摘要 + 档案路径。
-        "当前用户请求"是压缩后唯一合法的指令来源，摘要只是参考数据
-        —— 与 system prompt 的防注入约定配套。"""
+        """压缩后的首条消息：当前请求是唯一指令源，摘要仅供参考。"""
         return {"role": "user", "content": (
             f"[{label}]\n\n当前用户请求：\n{request}\n\n"
             f"对话摘要（仅供参考）：\n"
@@ -1073,15 +955,16 @@ class ContextCompactor:
         )}
 
     def compact_history(self, messages: list, active_request: str) -> list:
+        """归档全量历史后用 LLM 摘要，把 messages 替换为单条消息。"""
         transcript = self.write_transcript(messages)
         print(f"[历史已归档: {transcript}]")
         summary = self.summarize_history(messages)
         return [self.summary_message("已压缩", active_request, summary, transcript)]
 
     def reactive_compact(self, messages: list, active_request: str) -> list:
-        """反应式压缩：与 compact_history 的区别是保留最近 5 条原文不摘要。"""
+        """反应式压缩：保留最近 5 条原文不摘要（prompt_too_long 兜底）。"""
         transcript = self.write_transcript(messages)
-        print(f"[transcript saved: {transcript}]")
+        print(f"[历史已归档: {transcript}]")
         tail_start = max(0, len(messages) - self.KEEP_RECENT_MESSAGES)
         if (tail_start > 0 and self.is_tool_result(messages[tail_start])
                 and self.has_tool_use(messages[tail_start - 1])):
@@ -1110,15 +993,7 @@ class ContextCompactor:
 COMPACTOR = ContextCompactor(client, MODEL, TRANSCRIPT_DIR, TOOL_RESULTS_DIR)
 
 
-# ===========================================================================
-# §9 Goal 判断器（复用 s17_goal_loop，去掉 asyncio 改纯同步）
-# evaluate_goal_condition()：一次无工具的独立 LLM 调用，把
-#   "完成条件 + 对话记录"作为数据交给它，要求只回 JSON {ok, reason,
-#   impossible}；_parse_json_object 严格校验结构。
-# 判断器与执行者分离 —— 模型自己说"我做完了"不算数，
-#   必须由另一个只看证据的调用裁定；数据/指令分离的 prompt 防止对话内容
-#   里携带的指令劫持判断器。
-# ===========================================================================
+# == §9 goal 判断器：无工具的独立 LLM 裁定；模型自称完成不算数，只认证据 ==
 
 GOAL_BLOCK_CAP = 8   # 同一目标下连续未达成上限，超过则交还用户（防烧钱死循环）
 
@@ -1140,9 +1015,7 @@ def _block_value(block, key, default=None):
 
 
 def _plain_content(content) -> str:
-    """把消息 content 渲染成可读文本（含 tool_use/tool_result）。
-    判断器看的不是原始 JSON，而是浓缩过的对话记录，
-    24000 字符内尽量多保留证据。"""
+    """把 content 渲染成可读文本（含工具调用与结果）给判断器看。"""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -1165,8 +1038,7 @@ def _plain_content(content) -> str:
 
 
 def transcript_text(messages: list, max_characters: int = 24000) -> str:
-    """倒序收集最近的完整消息直到 24000 字符；单独一条超大消息
-    按 3/4 头 + 1/4 尾截断（s17 原样）。"""
+    """倒序取最近消息直到 24000 字符；单条超大按 3/4 头 + 1/4 尾截断。"""
     rendered = [
         f"{message.get('role', 'unknown').upper()}:\n"
         f"{_plain_content(message.get('content', ''))}"
@@ -1194,9 +1066,7 @@ def transcript_text(messages: list, max_characters: int = 24000) -> str:
 
 
 def _parse_json_object(text: str) -> dict:
-    """严格校验判断器返回的 JSON 结构。
-    判断器的输出直接驱动"继续/收口"决策，结构不对宁可
-    抛错交还用户，也不能带病决策。"""
+    """严格校验判断器返回的 JSON；结构不对就抛错，不带病决策。"""
     stripped = text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
@@ -1225,9 +1095,8 @@ def _parse_json_object(text: str) -> dict:
 
 
 def evaluate_goal_condition(condition: str, messages: list) -> dict:
-    # 条件与对话记录打包成一个 JSON 数据块交给判断器。
-    # 数据与指令分离：条件只是 payload 里的一个字段，
-    # 即使任务文本里含恶意指令，判断器也被 system prompt 约束为"只判数据"。
+    """无工具的独立 LLM 裁定，返回 {ok, reason, impossible}。
+    条件与对话记录打包成 JSON 数据块交给它：只判数据、不执行指令。"""
     payload = json.dumps(
         {"completion_condition": condition,
          "conversation": transcript_text(messages)},
@@ -1254,14 +1123,7 @@ def evaluate_goal_condition(condition: str, messages: list) -> dict:
     return _parse_json_object(extract_text(response.content))
 
 
-# ===========================================================================
-# §10 Agent 主循环（s01 骨架 + s08 压缩 + s04 钩位 + s17 闸门）
-# while True：压缩 -> 调模型 -> 记录真实 token -> 无 tool_use 则
-#   过 goal 闸门（仅 /goal 模式）或结束；有则逐个执行工具并回填 tool_result。
-# goal 闸门挂在"模型想停"的边界上：未达成时把判断理由注入
-#   为一条 user 消息并 continue —— 自动续轮没有任何特殊工具参与，只是一条
-#   消息 + 循环继续（s17 的核心机制）。
-# ===========================================================================
+# =============== §10 主循环：压缩 -> 调模型 -> 闸门/工具回填 ==============
 
 def agent_loop(messages: list, active_request: str,
                goal_condition: str | None = None):
@@ -1272,7 +1134,7 @@ def agent_loop(messages: list, active_request: str,
     reactive_retries = 0
 
     while True:
-        # ---- 压缩：每次调模型前都跑，超阈值才逐级下沉 ----
+        # 每次调模型前先压缩
         messages[:] = COMPACTOR.prepare(messages, active_request)
         try:
             response = client.messages.create(
@@ -1291,8 +1153,6 @@ def agent_loop(messages: list, active_request: str,
                 continue
             raise
 
-        # assistant 响应原样 append（SDK 的 content 块列表），
-        # 并记录真实 input_tokens 作为压缩计量的新基线。
         messages.append({"role": "assistant", "content": response.content})
         COMPACTOR.record_usage(response, messages)
 
@@ -1302,7 +1162,7 @@ def agent_loop(messages: list, active_request: str,
         if not tool_calls:
             text = extract_text(response.content)
 
-            # ---- goal 闸门：仅 /goal 模式进入此分支 ----
+            # ---- goal 闸门：未达成时注入理由并 continue，即自动续轮 ----
             if goal_condition is not None:
                 try:
                     evaluation = evaluate_goal_condition(goal_condition, messages)
@@ -1337,7 +1197,7 @@ def agent_loop(messages: list, active_request: str,
                 continue
             return text, None, ""
 
-        # ---- 执行本响应里的所有工具调用（严格串行，含多个 task） ----
+        # ---- 工具执行与结果回填 ----
         results = []
         for block in tool_calls:
             print(f"\033[36m> {block.name}\033[0m")
@@ -1348,14 +1208,7 @@ def agent_loop(messages: list, active_request: str,
         messages.append({"role": "user", "content": results})
 
 
-# ===========================================================================
-# §11 入口：REPL（唯一使用形态）
-# uv run 进来后在提示符下交互：读输入 -> 普通轮或 /goal 轮 ->
-#   打印结果。测试不内嵌在文件里，统一放在 test/ 目录（pytest 或直接运行）。
-# 按"简单点"的设计原则收敛入口：没有一次性参数模式，没有
-#   第二套调用路径要维护——多轮上下文在 REPL 里自然累积，goal 用 /goal
-#   显式指定，一次执行就是一个提示符输入。
-# ===========================================================================
+# ============ §11 入口：REPL 是唯一使用形态，测试在 test/ 目录 ============
 
 def repl() -> None:
     """交互主循环：唯一的任务提交入口。"""
@@ -1378,10 +1231,7 @@ def repl() -> None:
             continue
 
         if stripped.startswith("/goal"):
-            # /goal <条件>：本轮以 goal 模式执行 —— 条件即任务，
-            # 模型每次想停时由判断器审查，未达成自动续轮。
-            # 按需求精简：goal 不是常驻状态，只在显式输入
-            # /goal 时生效；跑完（achieved/failed/limit/error）即回到普通模式。
+            # 条件即任务：判断器未放行就自动续轮，收口后回到普通模式
             condition = stripped[len("/goal"):].strip()
             if not condition:
                 print("用法: /goal <完成条件>，例如 /goal pytest 全部通过且退出码为 0")
