@@ -577,6 +577,11 @@ def build_system_prompt() -> str:
         "而不是销毁。\n"
         "- 多步任务先用 todo_write 写出完整计划，并随进度更新状态。\n"
         "\n"
+        "任务分派：对会产生大量中间输出的探索或可独立完成的子任务，"
+        "用 task 外派并在 prompt 里写清目标与验收标准；"
+        "子助手与你在同一项目目录工作、但看不到当前对话，"
+        "依赖对话上下文的工作不要外派。\n"
+        "\n"
         f"可用技能：\n{SKILL_LOADER.catalog()}\n"
         "\n"
         "技能适用时，用 load_skill 读取完整说明。\n"
@@ -657,7 +662,11 @@ def run_subagent(prompt: str) -> str:
 
 TASK_TOOL = {
     "name": "task",
-    "description": "用全新的对话上下文运行一个子助手，返回它的最终文本。",
+    "description": (
+        "把一个自包含的子任务派给子助手：它用全新的对话上下文独立完成，"
+        "只返回最终文本。适用：需要大量中间探索的调研（读很多文件、反复试错）、"
+        "可独立完成的小任务。不适用：依赖当前对话上下文的工作、需要用户确认的步骤。"
+    ),
     "input_schema": {
         "type": "object",
         "properties": {"prompt": {"type": "string", "minLength": 1}},

@@ -15,3 +15,6 @@ __pycache__/
 /.task/
 /.transcripts/
 /.task_outputs/
+
+# ZCode 会话产物
+/.zcode/
