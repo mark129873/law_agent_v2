@@ -36,16 +36,12 @@ harness.py - 单文件通用助手 Harness
 
 硬性约束:
     1. 所有文件操作必须在项目根目录(启动目录)内,越界一律拒绝;
-    2. shell 删除命令一律拦截,唯一删除通道是 delete_file,
-       它把目标移动到 rubbish/ 而不是销毁.
+    2. 删除命令统一将目标移动到 rubbish/ 而不是销毁.
 
 快速开始:
-    1. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY 与 MODEL_ID
-    2. uv run harness.py                  # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
-
-
-测试(不调用 API,验证沙箱/拦截/删除/压缩等关键约束):
-    uv run pytest test/                   # 或: uv run test/test_harness.py (依赖同样自动安装)
+    1. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY, ANHROPIC_BASE_URL 与 MODEL_ID
+    2. uv sync                            # 安装依赖(如无需指定依赖安装目录, 此步骤可省, 3会自动安装)
+    3. uv run harness.py                  # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
 """
 
 # /// script
@@ -91,13 +87,9 @@ from dotenv import load_dotenv
 # ============================== §0 配置 ==============================
 
 load_dotenv(override=True)
-# 设置了兼容端点时清掉 AUTH_TOKEN,避免 SDK 同时带上两套凭证造成 401
 if os.getenv("ANTHROPIC_BASE_URL"):
     os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
 
-if os.name == "nt":
-    # 让老式 Windows 控制台启用 ANSI 转义,否则后面的着色会打成乱码
-    os.system("")
 
 IS_WINDOWS = os.name == "nt"
 
@@ -110,20 +102,17 @@ SKILLS_DIR = PROJECT_ROOT / "skills"                   # 技能目录
 # Windows 用 PowerShell,其余用 bash; §4 的拦截规则也按此分两套
 SHELL = ["powershell", "-NoProfile", "-Command"] if IS_WINDOWS else ["bash", "-c"]
 
-# 上下文窗口大小: 压缩阈值按它的百分比计算(DeepSeek 默认 1M,按模型改 .env)
+# 上下文窗口大小: 压缩阈值按它的百分比计算(默认 1M, 可.env配置)
 CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "1000000"))
 
-# 显式读取 key 并传给 SDK, 而不是依赖 SDK 的环境变量约定:
-# 缺 key 时能在启动期给出明确提示, 而不是第一次对话时才收到 401 裸报错
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "")
 MODEL = os.getenv("MODEL_ID", "")
 
-# key 缺失时用占位符构造, 保证模块可导入; 真正调用前 main() 会拦截并提示
-client = Anthropic(api_key=ANTHROPIC_API_KEY or "not-configured",
+client = Anthropic(api_key=ANTHROPIC_API_KEY,
                    base_url=ANTHROPIC_BASE_URL)
 
-MAX_TOKENS = 8000          # 每次模型调用的输出上限
+MAX_TOKENS = 10000          # 每次模型调用的输出上限
 BASH_TIMEOUT = 120         # shell 命令超时秒数
 
 if READLINE_AVAILABLE:
