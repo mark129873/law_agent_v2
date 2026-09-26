@@ -6,7 +6,7 @@ harness.py - 单文件通用助手 Harness
                                 | 否: /goal 模式过目标闸门,否则结束
 
     工具池: bash / read_file / write_file / edit_file / glob /
-            delete_file(移入 rubbish/) / todo_write / load_skill / task(子助手)
+            delete_file(移入 rubbish/) / todo_write / load_skill / subtask(子助手)
 
 九个机制各自的实现(括号 = 代码所在分区):
     1. Agent Loop      agent_loop 的 while True: 调模型,无 tool_use 即停,   错误也作为 tool_result 喂回, 不抛异常打断循环
@@ -22,9 +22,9 @@ harness.py - 单文件通用助手 Harness
                        返回非 None 的回调生效(§3)
     5. Task System     todo_write 工具每次传完整列表整体覆盖,               一轮一文件, 毫秒时间戳命名; status 三态
                        落盘 .task/task_<毫秒时间戳>.json,一轮一文件(§5)
-    6. Subagents       task(prompt) 用全新 messages 跑 30 轮独立循环,       仅 6 个基础工具, 无 task 防递归; 多 task 串行
+    6. Subagents       task(prompt) 用全新 messages 跑 30 轮独立循环,       仅 6 个基础工具, 无 subtask 防递归; 多 subtask 串行
                        最终文本作 tool_result 返回父级;
-                       同一响应里的多个 task 严格串行(§7)
+                       同一响应里的多个 subtask 严格串行(§7)
     7. Context Compact ContextCompactor 四级漏斗: 新结果落盘留预览 ->       占窗口 80% 触发压到 60%; 归档 .transcripts/ 等; 重试 1 次
                        中间历史归档 -> 旧结果缩短 -> LLM 摘要重写;
                        真实 token 计量,占窗口 80% 触发,压到 60%(§8)
@@ -578,7 +578,7 @@ def build_system_prompt() -> str:
         "- 多步任务先用 todo_write 写出完整计划,并随进度更新状态.\n"
         "\n"
         "任务分派: 对会产生大量中间输出的探索或可独立完成的子任务,"
-        "用 task 外派并在 prompt 里写清目标与验收标准; "
+        "用 subtask 外派并在 prompt 里写清目标与验收标准; "
         "子助手与你在同一项目目录工作,但看不到当前对话,"
         "依赖对话上下文的工作不要外派.\n"
         "\n"
@@ -609,7 +609,7 @@ def execute_tool(block) -> str:
 
 
 # ==== §7 子助手: 全新 messages,30 轮上限,最终文本作为 tool_result 返回;
-# 同一响应里的多个 task 调用严格串行; 无线程/邮箱/持久化 ====
+# 同一响应里的多个 subtask 调用严格串行; 无线程/邮箱/持久化 ====
 
 SUB_SYSTEM = (
     f"你是一个运行在 {PROJECT_ROOT} 的通用助手."
@@ -618,7 +618,7 @@ SUB_SYSTEM = (
 
 SUB_TOOLS = [tool for tool in TOOLS if tool["name"] in
              ("bash", "read_file", "write_file", "edit_file",
-              "glob", "delete_file")]  # 不含 task: 防止递归派生
+              "glob", "delete_file")]  # 不含 subtask: 防止递归派生
 SUB_HANDLERS = {name: TOOL_HANDLERS[name] for name in
                 ("bash", "read_file", "write_file", "edit_file",
                  "glob", "delete_file")}
@@ -660,8 +660,8 @@ def run_subagent(prompt: str) -> str:
     return "子助手运行 30 轮仍未给出最终答复,已停止."
 
 
-TASK_TOOL = {
-    "name": "task",
+SUBTASK_TOOL = {
+    "name": "subtask",
     "description": (
         "把一个自包含的子任务派给子助手: 它用全新的对话上下文独立完成,"
         "只返回最终文本.适用: 需要大量中间探索的调研(读很多文件,反复试错),"
@@ -674,8 +674,8 @@ TASK_TOOL = {
     },
 }
 
-TOOLS.append(TASK_TOOL)
-TOOL_HANDLERS["task"] = run_subagent
+TOOLS.append(SUBTASK_TOOL)
+TOOL_HANDLERS["subtask"] = run_subagent
 
 
 # ==== §8 上下文压缩: 占窗口 >=80% 触发,压到 60%(COMPACT_* 常量) ====

@@ -224,10 +224,10 @@ def test_tools_and_handlers_consistent():
     names = [tool["name"] for tool in harness.TOOLS]
     assert len(names) == len(set(names)), "duplicate tool name"
     assert set(names) == set(harness.TOOL_HANDLERS), "TOOLS 与 TOOL_HANDLERS 不一致"
-    assert {"task", "todo_write", "load_skill", "delete_file"} <= set(names)
-    # 子 agent 工具池不含 task(防递归),也不含计划/技能工具
+    assert {"subtask", "todo_write", "load_skill", "delete_file"} <= set(names)
+    # 子 agent 工具池不含 subtask(防递归),也不含计划/技能工具
     sub_names = {tool["name"] for tool in harness.SUB_TOOLS}
-    assert "task" not in sub_names and "todo_write" not in sub_names
+    assert "subtask" not in sub_names and "todo_write" not in sub_names
 
 
 # ---- 运行入口 ----
