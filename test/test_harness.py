@@ -1,17 +1,27 @@
 """harness.py 的离线测试(不调用 API,不需要 API key).
 
 验证 harness 的安全关键约束: 路径沙箱,删除->rubbish,
-Unix/PowerShell 两套拦截规则,todo 毫秒时间戳落盘,技能解析,
-压缩管线,goal 判断器 JSON 校验,工具 schema 一致性.
+Unix/PowerShell 两套拦截规则,todo_write 校验与任务面板渲染,
+技能解析,压缩管线,goal 判断器 JSON 校验,工具 schema 一致性.
 
 这些逻辑决定了"强制约束"是否真的强制 -- 改动 harness
 后跑一遍测试,比肉眼审查可靠; 测试放在 harness.py 外部,保持单文件
 本身只含运行所需代码.
 
 运行方式:
-    uv run pytest test/                   # 项目环境(推荐)
-    uv run test/test_harness.py           # 也可以直接运行本文件
+    uv run test/test_harness.py           # 按下方脚本元数据自动装依赖
+    uv run pytest test/                   # 项目环境: 需先 uv sync
 """
+
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "anthropic",
+#     "python-dotenv",
+#     "pyyaml",
+#     "pytest",
+# ]
+# ///
 
 from __future__ import annotations
 

@@ -39,14 +39,23 @@ harness.py - 单文件通用助手 Harness
     2. shell 删除命令一律拦截,唯一删除通道是 delete_file,
        它把目标移动到 rubbish/ 而不是销毁.
 
-快速开始(三步):
-    1. uv sync                            # 创建 .venv,按 uv.lock 安装依赖(Python 3.10+)
-    2. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY 与 MODEL_ID
-    3. uv run harness.py                  # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
+快速开始:
+    1. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY 与 MODEL_ID
+    2. uv run harness.py                  # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
+                                          # 依赖按下方脚本元数据自动安装,无需 uv sync
 
 测试(不调用 API,验证沙箱/拦截/删除/压缩等关键约束):
-    uv run pytest test/                   # 或: uv run test/test_harness.py
+    uv run pytest test/                   # 或: uv run test/test_harness.py (依赖同样自动安装)
 """
+
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "anthropic",
+#     "python-dotenv",
+#     "pyyaml",
+# ]
+# ///
 
 from __future__ import annotations
 
