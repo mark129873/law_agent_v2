@@ -42,7 +42,7 @@ harness.py - 单文件通用助手 Harness
 快速开始:
     1. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY 与 MODEL_ID
     2. uv run harness.py                  # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
-                                          # 依赖按下方脚本元数据自动安装,无需 uv sync
+
 
 测试(不调用 API,验证沙箱/拦截/删除/压缩等关键约束):
     uv run pytest test/                   # 或: uv run test/test_harness.py (依赖同样自动安装)
@@ -113,8 +113,14 @@ SHELL = ["powershell", "-NoProfile", "-Command"] if IS_WINDOWS else ["bash", "-c
 # 上下文窗口大小: 压缩阈值按它的百分比计算(DeepSeek 默认 1M,按模型改 .env)
 CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "1000000"))
 
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
+# 显式读取 key 并传给 SDK, 而不是依赖 SDK 的环境变量约定:
+# 缺 key 时能在启动期给出明确提示, 而不是第一次对话时才收到 401 裸报错
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 MODEL = os.getenv("MODEL_ID", "")
+
+# key 缺失时用占位符构造, 保证模块可导入; 真正调用前 main() 会拦截并提示
+client = Anthropic(api_key=ANTHROPIC_API_KEY or "not-configured",
+                   base_url=os.getenv("ANTHROPIC_BASE_URL"))
 
 MAX_TOKENS = 8000          # 每次模型调用的输出上限
 BASH_TIMEOUT = 120         # shell 命令超时秒数
@@ -1318,8 +1324,10 @@ def repl() -> None:
 
 
 def main() -> None:
-    if not MODEL:
-        sys.exit("MODEL_ID 未配置: 复制 .env.example 为 .env 并填写 ANTHROPIC_API_KEY 与 MODEL_ID")
+    missing = [name for name, value in
+               (("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY), ("MODEL_ID", MODEL)) if not value]
+    if missing:
+        sys.exit(f"{' 与 '.join(missing)} 未配置: 复制 .env.example 为 .env 并填写")
     repl()
 
 
