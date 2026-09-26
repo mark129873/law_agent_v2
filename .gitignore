@@ -1,0 +1,17 @@
+# 参考用的示范项目，不纳入本仓库
+/learn-claude-code/
+/codex/
+
+# 本地密钥，绝不入库
+/.env
+
+# Python 运行时产物
+__pycache__/
+.pytest_cache/
+.venv/
+
+# harness 运行时生成的目录
+/rubbish/
+/.task/
+/.transcripts/
+/.task_outputs/
