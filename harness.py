@@ -9,28 +9,28 @@ harness.py - 单文件通用助手 Harness
             delete_file(移入 rubbish/) / todo_write / load_skill / subtask(子助手)
 
 九个机制各自的实现(括号 = 代码所在分区):
-    1. Agent Loop      agent_loop 的 while True: 调模型,无 tool_use 即停,   错误也作为 tool_result 喂回, 不抛异常打断循环
+    1. Agent Loop      agent_loop 的 while True: 调模型,无 tool_use 即停,  错误也作为 tool_result 喂回,不抛异常打断循环
                        有则执行工具并把 tool_result 回填继续(§10)
-    2. Tool Use        TOOLS 存给模型看的 schema,TOOL_HANDLERS 是           文件操作全部先过 safe_path 沙箱
+    2. Tool Use        TOOLS 存给模型看的 schema,TOOL_HANDLERS 是          文件操作全部先过 safe_path 沙箱
                        名字->函数的 dispatch map,execute_tool 统一
                        拦截 -> 分发 -> 兜异常(§2)
-    3. Permission      permission_hook 三道闸门: 禁止清单硬拒 /             词表: sudo 等; 删除词分平台; chmod 777 等 5 个确认词
+    3. Permission      permission_hook 三道闸门: 禁止清单硬拒 /            词表 = sudo 等; 删除词分平台; chmod 777 等 5 个确认词
                        越界与 shell 删除硬拒 / 高危命令 [y/N] 确认;
                        拒绝原因作为 tool_result 喂回模型(§4)
-    4. Hooks           UserPromptSubmit / PreToolUse / PostToolUse /        Pre: 权限+日志; Post: 大输出告警; Stop: 计数; Submit: 无注册
+    4. Hooks           UserPromptSubmit / PreToolUse / PostToolUse /       Pre = 权限+日志; Post = 大输出告警; Stop = 计数; Submit 无注册
                        Stop 四个事件点挂回调,trigger_hooks 里第一个
                        返回非 None 的回调生效(§3)
-    5. Task System     todo_write 工具每次传完整列表整体覆盖,               一轮一文件, 毫秒时间戳命名; status 三态
-                       落盘 .task/task_<毫秒时间戳>.json,一轮一文件(§5)
-    6. Subagents       task(prompt) 用全新 messages 跑 30 轮独立循环,       仅 6 个基础工具, 无 subtask 防递归; 多 subtask 串行
+    5. Task System     TodoManager 内存任务板,todo_write 全量替换,         渲染 [ ]/[>]/[x] 面板; 单 in_progress; 上限 20 条
+                       3 轮未更新就在工具结果里注入提醒(§5)
+    6. Subagents       subtask(prompt) 用全新 messages 跑 30 轮独立循环,   子助手仅 6 个基础工具,无 subtask 防递归
                        最终文本作 tool_result 返回父级;
                        同一响应里的多个 subtask 严格串行(§7)
-    7. Context Compact ContextCompactor 四级漏斗: 新结果落盘留预览 ->       占窗口 80% 触发压到 60%; 归档 .transcripts/ 等; 重试 1 次
+    7. Context Compact ContextCompactor 四级漏斗: 新结果落盘留预览 ->      归档 .transcripts/ 与 .task_outputs/; 重试 1 次
                        中间历史归档 -> 旧结果缩短 -> LLM 摘要重写;
                        真实 token 计量,占窗口 80% 触发,压到 60%(§8)
-    8. Skill           启动扫描 skills/*/SKILL.md,system prompt 只放        frontmatter 只取 name/description 两字段
+    8. Skill           启动扫描 skills/*/SKILL.md,system prompt 只放       frontmatter 只取 name/description 两字段
                        "名称 + 描述"目录,load_skill 按需取全文(§6)
-    9. Goal Loop       /goal 后模型每次想停,由无工具的独立判断器裁定        max_tokens=512; 连续 8 次收口; error 不计数
+    9. Goal Loop       /goal 后模型每次想停,由无工具的独立判断器裁定       max_tokens=512; 连续 8 次收口; error 不计数
                        JSON {ok, reason, impossible}; 未达成注入理由
                        自动续轮,连续 8 次未放行收口交还用户(§9)
 
@@ -93,7 +93,6 @@ IS_WINDOWS = os.name == "nt"
 
 PROJECT_ROOT = Path.cwd().resolve()
 RUBBISH_DIR = PROJECT_ROOT / "rubbish"                 # 所有"删除"的最终归宿
-TASK_DIR = PROJECT_ROOT / ".task"                      # todo_write 的落盘目录
 TRANSCRIPT_DIR = PROJECT_ROOT / ".transcripts"         # 压缩归档的历史
 TOOL_RESULTS_DIR = PROJECT_ROOT / ".task_outputs" / "tool-results"  # 大输出归档
 SKILLS_DIR = PROJECT_ROOT / "skills"                   # 技能目录
@@ -121,15 +120,6 @@ def ts_millis() -> str:
     """生成精确到毫秒的时间戳字符串(17 位数字)."""
     now = datetime.now()
     return now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond // 1000:03d}"
-
-
-ROUND_TS: str | None = None  # 本轮对话开始的时间戳,todo_write 用它命名文件
-
-
-def new_round() -> None:
-    """固定本轮时间戳: todo_write 文件名取轮次开始时刻,同轮重写同一文件."""
-    global ROUND_TS
-    ROUND_TS = ts_millis()
 
 
 def extract_text(content) -> str:
@@ -416,9 +406,57 @@ register_hook("PostToolUse", large_output_hook)
 register_hook("Stop", stop_summary_hook)
 
 
-# ==== §5 todo_write: 每次传完整列表整体覆盖,文件名 = 轮次开始时间戳 ====
+# ==== §5 todo_write: TodoManager 内存任务板, 3 轮未更新注入提醒 ====
 
 TODO_STATUSES = ("pending", "in_progress", "completed")
+
+
+class TodoManager:
+    """内存任务板: update 全量替换并校验, render 渲染成 [ ]/[>]/[x] 面板."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+
+    def update(self, todos) -> str:
+        if isinstance(todos, str):  # 兼容模型把列表当字符串传
+            try:
+                todos = json.loads(todos)
+            except json.JSONDecodeError as e:
+                raise ValueError("todos must be a list or JSON array string") from e
+        if not isinstance(todos, list):
+            raise ValueError("todos must be a list")
+        if len(todos) > 20:
+            raise ValueError("Max 20 todos allowed")
+
+        validated, in_progress_count = [], 0
+        for index, todo in enumerate(todos):
+            if not isinstance(todo, dict):
+                raise ValueError(f"todos[{index}] must be an object")
+            content = str(todo.get("content", "")).strip()
+            status = str(todo.get("status", "pending")).lower()
+            if not content:
+                raise ValueError(f"todos[{index}] requires content")
+            if status not in TODO_STATUSES:
+                raise ValueError(f"todos[{index}] has invalid status '{status}'")
+            if status == "in_progress":
+                in_progress_count += 1
+            validated.append({"content": content, "status": status})
+        if in_progress_count > 1:
+            raise ValueError("Only one todo can be in_progress at a time")
+        self.items = validated
+        return self.render()
+
+    def render(self) -> str:
+        if not self.items:
+            return "No todos."
+        marker = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
+        lines = [f"{marker[t['status']]} {t['content']}" for t in self.items]
+        done = sum(t["status"] == "completed" for t in self.items)
+        lines.append(f"({done}/{len(self.items)} completed)")
+        return "\n".join(lines)
+
+
+TODO = TodoManager()
 
 TODO_TOOL = {
     "name": "todo_write",
@@ -428,15 +466,14 @@ TODO_TOOL = {
         "properties": {
             "todos": {
                 "type": "array",
+                "maxItems": 20,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "subject": {"type": "string"},
-                        "description": {"type": "string"},
-                        "status": {"type": "string",
-                                   "enum": list(TODO_STATUSES)},
+                        "content": {"type": "string", "minLength": 1},
+                        "status": {"type": "string", "enum": list(TODO_STATUSES)},
                     },
-                    "required": ["subject"],
+                    "required": ["content", "status"],
                 },
             }
         },
@@ -445,33 +482,14 @@ TODO_TOOL = {
 }
 
 
-def run_todo_write(todos: list) -> str:
-    """整体覆盖写 .task/task_<轮次开始毫秒时间戳>.json."""
+def run_todo_write(todos) -> str:
+    """全量替换内存任务板, 打印并返回渲染后的任务面板."""
     try:
-        if not isinstance(todos, list) or not todos:
-            return "Error: todos must be a non-empty array of {subject, description?, status?}"
-        cleaned = []
-        for item in todos:
-            if not isinstance(item, dict) or not str(item.get("subject", "")).strip():
-                return "Error: every todo needs a subject"
-            status = item.get("status", "pending")
-            if status not in TODO_STATUSES:
-                return f"Error: status must be one of {TODO_STATUSES}"
-            cleaned.append({
-                "subject": str(item["subject"]).strip(),
-                "description": str(item.get("description", "")),
-                "status": status,
-            })
-        TASK_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = ROUND_TS or ts_millis()
-        payload = {"round_start": stamp, "updated_at": ts_millis(),
-                   "todos": cleaned}
-        path = TASK_DIR / f"task_{stamp}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
-        return f"Saved {len(cleaned)} todos to {path.relative_to(PROJECT_ROOT)}"
-    except Exception as e:
+        output = TODO.update(todos)
+    except ValueError as e:
         return f"Error: {e}"
+    print(f"\n\033[33m## 当前任务\033[0m\n{output}")
+    return output
 
 
 # ===== §6 技能加载: system prompt 只放目录,load_skill 按需取全文 =====
@@ -1155,6 +1173,7 @@ def agent_loop(messages: list, active_request: str,
 
     consecutive_blocks = 0   # 单次 goal 执行内连续未达成的次数
     reactive_retries = 0
+    rounds_since_todo = 0    # 距上次更新任务板经过的工具轮数
 
     while True:
         # 每次调模型前先压缩
@@ -1222,12 +1241,21 @@ def agent_loop(messages: list, active_request: str,
 
         # ---- 工具执行与结果回填 ----
         results = []
+        used_todo = False
         for block in tool_calls:
             print(f"\033[36m> {block.name}\033[0m")
             output = execute_tool(block)
             print(str(output)[:200])
+            if block.name == "todo_write":
+                used_todo = True
             results.append({"type": "tool_result", "tool_use_id": block.id,
                             "content": output})
+        # 3 轮没更新任务板就提醒一次, 防止计划与实际进度脱节(s05 的做法)
+        rounds_since_todo = 0 if used_todo else rounds_since_todo + 1
+        if rounds_since_todo >= 3:
+            results.append({"type": "text",
+                            "text": "<reminder>请更新任务列表.</reminder>"})
+            rounds_since_todo = 0
         messages.append({"role": "user", "content": results})
 
 
@@ -1259,7 +1287,6 @@ def repl() -> None:
             if not condition:
                 print("用法: /goal <完成条件>,例如 /goal pytest 全部通过且退出码为 0")
                 continue
-            new_round()
             trigger_hooks("UserPromptSubmit", condition)
             history.append({"role": "user", "content": condition})
             text, status, reason = agent_loop(history, condition,
@@ -1268,7 +1295,6 @@ def repl() -> None:
                 print(text)
             print(f"\033[35m[goal] {status}: {reason}\033[0m")
         else:
-            new_round()
             trigger_hooks("UserPromptSubmit", query)
             history.append({"role": "user", "content": query})
             text, _, _ = agent_loop(history, query)

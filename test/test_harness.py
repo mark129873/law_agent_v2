@@ -15,7 +15,6 @@ Unix/PowerShell 两套拦截规则,todo 毫秒时间戳落盘,技能解析,
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import sys
@@ -38,20 +37,19 @@ except ImportError:
 @contextmanager
 def sandbox():
     """把 harness 的项目根目录全局变量重定向到临时目录,结束后还原.
-    safe_path / run_delete_file / run_todo_write 等函数都在
-    运行时读模块级全局变量,重定向即可让测试在隔离沙箱里跑,不污染真实项目."""
+    safe_path / run_delete_file 等函数都在运行时读模块级全局变量,
+    重定向即可让测试在隔离沙箱里跑,不污染真实项目."""
     tmp = Path(tempfile.mkdtemp(prefix="harness_test_"))
-    saved = (harness.PROJECT_ROOT, harness.RUBBISH_DIR, harness.TASK_DIR,
+    saved = (harness.PROJECT_ROOT, harness.RUBBISH_DIR,
              harness.TRANSCRIPT_DIR, harness.TOOL_RESULTS_DIR)
     harness.PROJECT_ROOT = tmp
     harness.RUBBISH_DIR = tmp / "rubbish"
-    harness.TASK_DIR = tmp / ".task"
     harness.TRANSCRIPT_DIR = tmp / ".transcripts"
     harness.TOOL_RESULTS_DIR = tmp / ".task_outputs" / "tool-results"
     try:
         yield tmp
     finally:
-        (harness.PROJECT_ROOT, harness.RUBBISH_DIR, harness.TASK_DIR,
+        (harness.PROJECT_ROOT, harness.RUBBISH_DIR,
          harness.TRANSCRIPT_DIR, harness.TOOL_RESULTS_DIR) = saved
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -133,28 +131,28 @@ def test_permission_hook_gate():
     assert harness.permission_hook(esc_block) is not None
 
 
-# ---- todo_write 全量重写 + 毫秒时间戳文件名 ----
+# ---- todo_write: TodoManager 内存任务板 ----
 
-def test_todo_write_round_file():
-    # 用固定时间戳而不是 ts_millis(): 两次真实调用可能落在同一毫秒,
-    # 依赖时钟前进的断言会概率性失败
-    harness.ROUND_TS = "20260101000000001"
-    out = harness.run_todo_write([{"subject": "step one"},
-                                  {"subject": "step two", "status": "in_progress"}])
-    assert out.startswith("Saved"), out
-    files = list(harness.TASK_DIR.glob("task_*.json"))
-    assert len(files) == 1
-    assert re.fullmatch(r"task_\d{17}\.json", files[0].name), files[0].name
-    payload = json.loads(files[0].read_text(encoding="utf-8"))
-    assert payload["todos"][1]["status"] == "in_progress"
-    # 新轮次 -> 新文件(ROUND_TS 变化即新轮)
-    harness.ROUND_TS = "20991231235959999"
-    harness.run_todo_write([{"subject": "only", "status": "completed"}])
-    assert len(list(harness.TASK_DIR.glob("task_*.json"))) == 2
-    harness.ROUND_TS = None
-    # 非法输入返回 Error 字符串而不抛异常
-    assert harness.run_todo_write([]).startswith("Error")
-    assert harness.run_todo_write([{"status": "done"}]).startswith("Error")
+def test_todo_manager_update_and_render():
+    # 正常写入: 渲染成 [ ]/[>]/[x] 任务面板
+    out = harness.run_todo_write([{"content": "step one", "status": "pending"},
+                                  {"content": "step two", "status": "in_progress"}])
+    assert "[ ] step one" in out and "[>] step two" in out
+    assert "(0/2 completed)" in out
+    # 全量替换语义: 再写一次只剩新内容
+    out = harness.run_todo_write([{"content": "only", "status": "completed"}])
+    assert "(1/1 completed)" in out and "step one" not in out
+    # 约束: 同时只允许一个 in_progress
+    bad = [{"content": "a", "status": "in_progress"},
+           {"content": "b", "status": "in_progress"}]
+    assert harness.run_todo_write(bad).startswith("Error")
+    # 约束: 空内容/非法状态/超 20 条
+    assert harness.run_todo_write([{"content": "", "status": "pending"}]).startswith("Error")
+    assert harness.run_todo_write([{"content": "x", "status": "done"}]).startswith("Error")
+    assert harness.run_todo_write([{"content": "x", "status": "pending"}] * 21).startswith("Error")
+    # 字符串形式的列表也能解析(s05 的兼容行为)
+    out = harness.run_todo_write('[{"content": "json todo", "status": "pending"}]')
+    assert "[ ] json todo" in out
 
 
 # ---- Skill Loading ----
