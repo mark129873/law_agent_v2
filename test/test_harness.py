@@ -1,15 +1,15 @@
-"""harness.py 的离线测试（不调用 API，不需要 API key）。
+"""harness.py 的离线测试(不调用 API,不需要 API key).
 
-验证 harness 的安全关键约束：路径沙箱、删除->rubbish、
-Unix/PowerShell 两套拦截规则、todo 毫秒时间戳落盘、技能解析、
-压缩管线、goal 判断器 JSON 校验、工具 schema 一致性。
+验证 harness 的安全关键约束: 路径沙箱,删除->rubbish,
+Unix/PowerShell 两套拦截规则,todo 毫秒时间戳落盘,技能解析,
+压缩管线,goal 判断器 JSON 校验,工具 schema 一致性.
 
-这些逻辑决定了"强制约束"是否真的强制 —— 改动 harness
-后跑一遍测试，比肉眼审查可靠；测试放在 harness.py 外部，保持单文件
-本身只含运行所需代码。
+这些逻辑决定了"强制约束"是否真的强制 -- 改动 harness
+后跑一遍测试,比肉眼审查可靠; 测试放在 harness.py 外部,保持单文件
+本身只含运行所需代码.
 
-运行方式：
-    uv run pytest test/                   # 项目环境（推荐）
+运行方式:
+    uv run pytest test/                   # 项目环境(推荐)
     uv run test/test_harness.py           # 也可以直接运行本文件
 """
 
@@ -37,9 +37,9 @@ except ImportError:
 
 @contextmanager
 def sandbox():
-    """把 harness 的项目根目录全局变量重定向到临时目录，结束后还原。
+    """把 harness 的项目根目录全局变量重定向到临时目录,结束后还原.
     safe_path / run_delete_file / run_todo_write 等函数都在
-    运行时读模块级全局变量，重定向即可让测试在隔离沙箱里跑，不污染真实项目。"""
+    运行时读模块级全局变量,重定向即可让测试在隔离沙箱里跑,不污染真实项目."""
     tmp = Path(tempfile.mkdtemp(prefix="harness_test_"))
     saved = (harness.PROJECT_ROOT, harness.RUBBISH_DIR, harness.TASK_DIR,
              harness.TRANSCRIPT_DIR, harness.TOOL_RESULTS_DIR)
@@ -82,12 +82,12 @@ def test_delete_file_moves_to_rubbish():
     assert out.startswith("Moved"), out
     assert not (harness.PROJECT_ROOT / "doomed.txt").exists()
     assert any(harness.RUBBISH_DIR.iterdir()), "rubbish is empty"
-    # 保护对象：rubbish 自身、项目根、不存在的路径
+    # 保护对象: rubbish 自身,项目根,不存在的路径
     assert harness.run_delete_file("rubbish").startswith("Error")
     assert harness.run_delete_file("no_such.txt").startswith("Error")
 
 
-# ---- 权限拦截（两套平台规则都要验证）----
+# ---- 权限拦截(两套平台规则都要验证)----
 
 def test_delete_rules_unix():
     assert harness.match_delete_command("rm a.txt", windows=False)
@@ -128,7 +128,7 @@ def test_permission_hook_gate():
     # delete_file 是唯一合法的删除通道
     del_block = SimpleNamespace(name="delete_file", input={"path": "x"})
     assert harness.permission_hook(del_block) is None
-    # 文件工具路径越界：硬拒
+    # 文件工具路径越界: 硬拒
     esc_block = SimpleNamespace(name="write_file", input={"path": "../evil.txt"})
     assert harness.permission_hook(esc_block) is not None
 
@@ -136,7 +136,7 @@ def test_permission_hook_gate():
 # ---- todo_write 全量重写 + 毫秒时间戳文件名 ----
 
 def test_todo_write_round_file():
-    # 用固定时间戳而不是 ts_millis()：两次真实调用可能落在同一毫秒，
+    # 用固定时间戳而不是 ts_millis(): 两次真实调用可能落在同一毫秒,
     # 依赖时钟前进的断言会概率性失败
     harness.ROUND_TS = "20260101000000001"
     out = harness.run_todo_write([{"subject": "step one"},
@@ -147,7 +147,7 @@ def test_todo_write_round_file():
     assert re.fullmatch(r"task_\d{17}\.json", files[0].name), files[0].name
     payload = json.loads(files[0].read_text(encoding="utf-8"))
     assert payload["todos"][1]["status"] == "in_progress"
-    # 新轮次 -> 新文件（ROUND_TS 变化即新轮）
+    # 新轮次 -> 新文件(ROUND_TS 变化即新轮)
     harness.ROUND_TS = "20991231235959999"
     harness.run_todo_write([{"subject": "only", "status": "completed"}])
     assert len(list(harness.TASK_DIR.glob("task_*.json"))) == 2
@@ -177,12 +177,12 @@ def test_skill_loader_scan_and_load():
 def test_compactor_snip_and_budget():
     compactor = harness.ContextCompactor(
         None, harness.MODEL, harness.TRANSCRIPT_DIR, harness.TOOL_RESULTS_DIR)
-    # snip：消息数超限时归档中间历史
+    # snip: 消息数超限时归档中间历史
     messages = [{"role": "user", "content": f"message {i}"} for i in range(60)]
     snipped = compactor.snip_compact(list(messages))
     assert len(snipped) < 60, "snip_compact did not shrink"
     assert any(compactor.is_archive_marker(m) for m in snipped)
-    # budget：最新一批超大 tool_result 落盘留预览
+    # budget: 最新一批超大 tool_result 落盘留预览
     batch = [{"role": "user", "content": [{"type": "tool_result",
               "tool_use_id": "t1", "content": "x" * 40000}]}]
     budgeted = compactor.tool_result_budget(batch, max_chars=1000)
@@ -225,7 +225,7 @@ def test_tools_and_handlers_consistent():
     assert len(names) == len(set(names)), "duplicate tool name"
     assert set(names) == set(harness.TOOL_HANDLERS), "TOOLS 与 TOOL_HANDLERS 不一致"
     assert {"task", "todo_write", "load_skill", "delete_file"} <= set(names)
-    # 子 agent 工具池不含 task（防递归），也不含计划/技能工具
+    # 子 agent 工具池不含 task(防递归),也不含计划/技能工具
     sub_names = {tool["name"] for tool in harness.SUB_TOOLS}
     assert "task" not in sub_names and "todo_write" not in sub_names
 
@@ -240,7 +240,7 @@ if HAS_PYTEST:
 
 
 if __name__ == "__main__":
-    # 无 pytest 时的兜底运行方式：同一个沙箱里顺序跑完全部测试
+    # 无 pytest 时的兜底运行方式: 同一个沙箱里顺序跑完全部测试
     failures = 0
     with sandbox():
         for name, fn in sorted(globals().items()):
