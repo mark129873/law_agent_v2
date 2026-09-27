@@ -14,14 +14,126 @@
     "passing": "要求的验证已经通过，并且证据已经记录。",
     "deprecated": "功能已被废弃，或者已被替代"
   },
-  "features": [     
+  "features": [
     {
       "id": "BE-001",
-      "name": "xxx",
-      "description": "xxx",
+      "name": "后端骨架+配置+DB",
+      "description": "backend 工程（uv + FastAPI + SQLAlchemy）：config(.env 全量可配)、SQLite 四表迁移(WAL)、/api/health、obs.py 基础 logging(控制台+滚动文件)、首次启动全自动初始化目录",
       "status": "planned",
-      "evidence": "xxx",
-      "testedAt": "20xx-xx-xx"
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-002",
+      "name": "会话存储层",
+      "description": "ZCode 式存储：session/message/part/session_entry 四表，里程碑式实时 upsert(sequence 冲突保留)，turn 事实(active_ms 排除审批等待)，软删标记，全量回放拼装(按 turn 分组)，pytest 单测",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-003",
+      "name": "会话 CRUD+resume API",
+      "description": "POST/GET /api/sessions(含 running 标志,draft 语义)、GET /api/sessions/{id}(全量回放)、DELETE(软删)、标题=首条消息截断30字、API 集成测试",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-004",
+      "name": "agent 核心",
+      "description": "mini_harness 移植：TOOLS/TOOL_HANDLERS 双表(6基础工具)、safe_path 沙箱(workspace/)、权限闸门(deny硬拒/高危审批/自动)、hooks 四事件点、错误转 tool_result、PowerShell 执行、pytest",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-005",
+      "name": "SSE 流式 turn",
+      "description": "Anthropic 兼容流式调用、POST turn 返回 SSE 事件流、turn_manager(同会话单turn 409/跨会话并行)、stop 优雅收尾(部分输出以 stopped 落盘)、token_count 事件、15s 心跳",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-006",
+      "name": "交互审批",
+      "description": "高危命中挂起(asyncio.Event)、SSE 推 approval_request、POST approval 唤醒、拒绝理由喂回模型、审批留痕 session_entry、active_ms 审批等待记账、状态机单测",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-007",
+      "name": "ZCode compact+microcompact",
+      "description": "auto 阈值=窗口-32K输出预留-13K buffer(真实usage优先,失败3次熔断)、固定摘要 prompt、摘要消息为 resume 边界、compaction 事实落库、microcompact 旧工具输出占位(保留最近5条)、单测",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-008",
+      "name": "subtask/skills/todo",
+      "description": "subtask 子助手(30轮独立循环、防递归、subtask_* SSE 事件与落盘)、load_skill(backend/skills/ 目录约定)、todo_write(任务板落盘+SSE)",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-009",
+      "name": "重新生成",
+      "description": "按 sequence 回滚指定 turn 之后的行(软删标记)+保留用户消息重跑；错误重试复用同机制；边界测试",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "BE-010",
+      "name": "观测补全(Langfuse)",
+      "description": "关键链路日志补全(turn生命周期/工具/审批/压缩)、Langfuse SDK 集成(LANGFUSE_ENABLED 默认 false,trace=session/span=turn,失败不影响主流程,与 logging 不重复)",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "FE-001",
+      "name": "前端脚手架+三栏布局",
+      "description": "Vite+React18+TS+Tailwind v4、三栏布局(侧栏/对话流/subtask面板)、浅色 zinc 主题、中文 UI、api/client.ts(fetch+SSE 解析)、types.ts、Vite 代理 /api→8000、npm build 通过",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "FE-002",
+      "name": "会话列表+呼吸点+空状态",
+      "description": "侧栏会话列表(标题/时间/token数/更新时间倒序)、新建(接 POST)、删除(确认弹窗)、生成中呼吸点轮询、空状态欢迎页、浏览器手测",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "FE-003",
+      "name": "TurnGroup 工作块+流式聊天",
+      "description": "TurnGroup(块头状态机:工作中/已工作/已停止+每秒tick+自动收起+codex耗时阶梯)、SSE 流式渲染、MessageItem(react-markdown+rehype-highlight+复制)、工具卡(二级折叠+输出预览)、TodoCard、Composer(Enter/Shift+Enter+停止)、浏览器手测",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "FE-004",
+      "name": "审批弹窗+token徽标+错误重试",
+      "description": "ApprovalModal(SSE 事件驱动+刷新恢复)、审批留痕卡、TokenBadge(会话头部用量进度)、ErrorCard(内联+重试)、停止后保留部分输出(已停止标记)、浏览器手测",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
+    },
+    {
+      "id": "FE-005",
+      "name": "重新生成+subtask 面板联调",
+      "description": "重新生成按钮(保留用户消息回滚重跑)、SubtaskCard+右侧 SubtaskViewer(实时/历史输出)、探索/执行聚合组、已压缩提示、全流程浏览器联调",
+      "status": "planned",
+      "evidence": "",
+      "testedAt": ""
     }
   ]
 }
