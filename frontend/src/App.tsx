@@ -20,7 +20,9 @@ export default function App() {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   const [liveTurn, setLiveTurn] = useState<TurnData | null>(null)
+  // eslint-disable-next-line react-hooks/incompatible-library -- FE-3 接管流式状态后由 send 回调写入
   const [isStreaming, setIsStreaming] = useState(false)
+  void setIsStreaming // 暂未使用：FE-3 的发送流程会写入此状态
   // 右栏 subtask 状态（FE-5 完成卡片联动，这里先支持关闭）
   const [activeSubtask, setActiveSubtask] = useState<{ id: string; goal: string } | null>(null)
 
@@ -40,9 +42,12 @@ export default function App() {
         currentId={currentId}
         onSelect={openSession}
         onSessionsChange={setSessions}
-        onOpened={(d) => setDetail(d)}
-        onLiveTurn={(t) => setLiveTurn(t)}
-        onStreaming={(s) => setIsStreaming(s)}
+        onDraftCreated={(id) => {
+          // draft 会话：进入空对话态，首条消息发出后才落库
+          setCurrentId(id)
+          setDetail(null)
+          setLiveTurn(null)
+        }}
       />
 
       {/* 中栏：对话流 */}
