@@ -1,0 +1,227 @@
+/**
+ * useSessionStream：把 SSE 事件流并成"实时 turn"状态。
+ *
+ * 设计（对应 ZCode 桌面端的工作块归属）：
+ * - 实时 turn 与回放 turn 用同一种数据形状（TurnData），渲染组件完全复用；
+ * - delta 文本累积为 final_text 的"生成中草稿"（最后一条 assistant 正文在块外）；
+ * - 工具/审批/任务板/子助手事件按序追加进 work_items（块内条目）；
+ * - 事件里出现 turn_completed 后，调用方应重新拉取会话详情，
+ *   以落盘事实为准替换实时 turn（耗时等切换为权威值）。
+ */
+
+import { useCallback, useRef, useState } from 'react'
+
+import { streamTurn } from '../api/client'
+import type { SseEvent, ToolStatus, TurnData, WorkItem } from '../types'
+
+export interface LiveTurnState {
+  turn: TurnData | null
+  isStreaming: boolean
+  error: string | null
+  tokenCount: { input: number; output: number } | null
+  /** 收口时把"生成中草稿"固化为最终回复（send 返回 promise 便于调用方刷新） */
+}
+
+export function useSessionStream(sessionId: string | null) {
+  const [turn, setTurn] = useState<TurnData | null>(null)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [tokenCount, setTokenCount] = useState<{ input: number; output: number } | null>(null)
+
+  // 用 ref 持有正在构建的 turn，避免闭包读到旧状态
+  const turnRef = useRef<TurnData | null>(null)
+
+  const appendItem = useCallback((item: WorkItem) => {
+    if (turnRef.current) {
+      turnRef.current.work_items = [...turnRef.current.work_items, item]
+      setTurn({ ...turnRef.current })
+    }
+  }, [])
+
+  /** 事件归约器：SSE 事件 → 实时 turn 状态 */
+  const applyEvent = useCallback(
+    (event: SseEvent) => {
+      const cur = turnRef.current
+      switch (event.type) {
+        case 'turn_started':
+          turnRef.current = {
+            turn_id: event.turn_id,
+            state: 'running',
+            started_at: event.started_at,
+            ended_at: null,
+            active_ms: null,
+            user_message: null, // 由调用方在 send 前填充（本地即时显示）
+            work_items: [],
+            final_text: null,
+          }
+          setTurn({ ...turnRef.current })
+          break
+
+        case 'delta':
+          if (cur) {
+            cur.final_text = (cur.final_text ?? '') + event.text
+            setTurn({ ...cur })
+          }
+          break
+
+        case 'tool_started':
+          appendItem({
+            kind: 'tool_call',
+            id: event.tool_call_id,
+            name: event.name,
+            input: event.input,
+            status: 'running' as ToolStatus,
+            output: '',
+            time: Date.now(),
+          })
+          break
+
+        case 'tool_completed':
+          if (cur) {
+            // 同一 tool_call_id 可能先有 tool_started 卡，就地更新；否则补一张结果卡
+            const idx = cur.work_items.findIndex(
+              (x) => x.kind === 'tool_call' && x.id === event.tool_call_id,
+            )
+            const item: WorkItem = {
+              kind: 'tool_call',
+              id: event.tool_call_id,
+              name: event.name,
+              input: undefined,
+              status: event.status,
+              output: event.output_preview,
+              time: Date.now(),
+            }
+            cur.work_items =
+              idx >= 0
+                ? cur.work_items.map((x, i) => (i === idx ? item : x))
+                : [...cur.work_items, item]
+            setTurn({ ...cur })
+          }
+          break
+
+        case 'todo_updated':
+          appendItem({
+            kind: 'todo',
+            id: `todo-${Date.now()}`,
+            items: event.items,
+            time: Date.now(),
+          })
+          break
+
+        case 'subtask_started':
+          appendItem({
+            kind: 'subtask',
+            id: event.subtask_id,
+            goal: event.goal,
+            status: 'running',
+            output: '',
+            time: Date.now(),
+          })
+          break
+
+        case 'subtask_delta':
+          if (cur) {
+            const idx = [...cur.work_items].reverse().findIndex(
+              (x) => x.kind === 'subtask' && x.id === event.subtask_id,
+            )
+            if (idx >= 0) {
+              const real = cur.work_items.length - 1 - idx
+              const sub = cur.work_items[real] as Extract<WorkItem, { kind: 'subtask' }>
+              sub.output += event.text
+              setTurn({ ...cur })
+            }
+          }
+          break
+
+        case 'subtask_completed':
+          if (cur) {
+            cur.work_items = cur.work_items.map((x) =>
+              x.kind === 'subtask' && x.id === event.subtask_id
+                ? { ...x, status: event.status }
+                : x,
+            )
+            setTurn({ ...cur })
+          }
+          break
+
+        case 'approval_request':
+          appendItem({
+            kind: 'approval',
+            id: event.request_id,
+            tool: event.tool,
+            input: event.input,
+            reason: event.reason,
+            status: 'requested',
+            time: Date.now(),
+          })
+          break
+
+        case 'approval_resolved':
+          if (cur) {
+            cur.work_items = cur.work_items.map((x) =>
+              x.kind === 'approval' && x.id === event.request_id
+                ? { ...x, status: event.approved ? 'approved' : 'denied' }
+                : x,
+            )
+            setTurn({ ...cur })
+          }
+          break
+
+        case 'token_count':
+          setTokenCount({ input: event.input_tokens, output: event.output_tokens })
+          break
+
+        case 'compacted':
+          appendItem({
+            kind: 'compaction',
+            id: `compact-${Date.now()}`,
+            tokens_before: event.tokens_before,
+            tokens_after: event.tokens_after,
+            time: Date.now(),
+          })
+          break
+
+        case 'error':
+          setError(event.message)
+          break
+
+        case 'turn_completed':
+          if (turnRef.current) {
+            turnRef.current.state = event.state
+            turnRef.current.ended_at = event.ended_at
+            turnRef.current.active_ms = event.active_ms
+            setTurn({ ...turnRef.current })
+          }
+          break
+
+        default:
+          break
+      }
+    },
+    [appendItem],
+  )
+
+  /** 发送用户消息：立即本地显示用户气泡，随后消费 SSE 流 */
+  const send = useCallback(
+    async (text: string, onFinished?: () => void) => {
+      if (!sessionId || isStreaming) return
+      setError(null)
+      setIsStreaming(true)
+      setTokenCount(null)
+      turnRef.current = null
+
+      try {
+        await streamTurn(sessionId, text, applyEvent)
+      } catch (e) {
+        // 连接中断：turn 在后端继续跑，界面提示可刷新回看
+        setError(e instanceof Error ? e.message : '连接中断，可稍后刷新回看进度')
+      } finally {
+        setIsStreaming(false)
+        onFinished?.()
+      }
+    },
+    [sessionId, isStreaming, applyEvent],
+  )
+
+  return { turn, isStreaming, error, tokenCount, send, setError }
+}
