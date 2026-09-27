@@ -91,9 +91,9 @@
       "id": "BE-010",
       "name": "观测补全(Langfuse)",
       "description": "关键链路日志补全(turn生命周期/工具/审批/压缩)、Langfuse SDK 集成(LANGFUSE_ENABLED 默认 false,trace=session/span=turn,失败不影响主流程,与 logging 不重复)",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 69 passed：默认关闭不构造客户端/开启用 host+keys 构造/初始化失败降级为 None/上报 payload(trace=session,generation 带 turn_id+messages+output+token 用量)/上报异常吞掉不挡主流程/端到端跑 turn 收到该步调用；turn 生命周期与工具/审批/压缩工程事件日志已接",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "FE-001",

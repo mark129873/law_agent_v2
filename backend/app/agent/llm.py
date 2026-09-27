@@ -31,14 +31,14 @@ class AnthropicStreamClient:
         if s.anthropic_base_url:
             kwargs["base_url"] = s.anthropic_base_url
         self._client = AsyncAnthropic(**kwargs)
-        self._model = s.model_id
+        self.model = s.model_id  # 公开属性：观测上报用
         self._max_tokens = s.max_tokens
 
     async def stream(
         self, *, system: str, messages: list, tools: list
     ) -> AsyncIterator[dict]:
         async with self._client.messages.stream(
-            model=self._model,
+            model=self.model,
             system=system,
             messages=messages,
             tools=tools,

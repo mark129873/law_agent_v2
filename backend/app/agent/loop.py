@@ -23,6 +23,7 @@ from typing import AsyncIterator, Callable
 
 from app.agent import hooks, permissions
 from app.agent.tools import TOOLS, execute_tool
+from app.obs import record_llm_call
 from app.sessions.recorder import TurnRecorder
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
         persist_user=deps.persist_user_message,
         user_sequence=deps.user_sequence,
     )
+    logger.info("turn 开始 session=%s turn=%s", deps.recorder.session_id, turn_id)
     yield {"type": "turn_started", "turn_id": turn_id, "started_at": deps.recorder.started_at}
 
     state = "success"
@@ -139,6 +141,8 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
             message_id = deps.recorder.step_message()
             text_acc = ""
             tool_uses: list[dict] = []
+            step_usage = {"input_tokens": 0, "output_tokens": 0}
+            messages_snapshot = [dict(m) for m in deps.history]  # 观测上报用的调用时快照
             try:
                 async for event in deps.client.stream(
                     system=deps.system_prompt, messages=deps.history, tools=deps.tools
@@ -153,6 +157,10 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                     elif kind == "tool_use":
                         tool_uses.append(event)
                     elif kind == "usage":
+                        step_usage = {
+                            "input_tokens": event.get("input_tokens", 0),
+                            "output_tokens": event.get("output_tokens", 0),
+                        }
                         deps.recorder.add_tokens(event.get("output_tokens", 0))
                         yield {
                             "type": "token_count",
@@ -165,6 +173,13 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 yield {"type": "error", "message": str(exc)}
                 state = "failed"
                 break
+            finally:
+                # Langfuse：上报本步 LLM 交互细节（未启用时为空操作）
+                record_llm_call(
+                    deps.recorder.session_id, turn_id,
+                    getattr(deps.client, "model", "unknown"),
+                    deps.system_prompt, messages_snapshot, text_acc, step_usage,
+                )
 
             # ---- 里程碑落盘：正文与工具调用（pending 态） ----
             if text_acc:
@@ -227,6 +242,10 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
     if stop_requested:
         state = "stopped"
     fact = deps.recorder.end_turn(state)
+    logger.info(
+        "turn 收口 session=%s turn=%s state=%s 工时=%.0fms tokens=%s",
+        deps.recorder.session_id, turn_id, state, fact["active_ms"], fact["tokens_used"],
+    )
     yield {
         "type": "turn_completed",
         "turn_id": turn_id,

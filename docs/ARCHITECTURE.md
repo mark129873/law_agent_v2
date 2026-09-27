@@ -89,7 +89,7 @@ backend/data/
 | GET /api/health | 健康检查 |
 
 SSE 事件（`event: <类型>` + `data: <JSON>`，15s 心跳）：
-`turn_started{turn_id, started_at}` / `delta{text}` / `tool_started{tool_call_id, name, input}` / `tool_completed{tool_call_id, status, output_preview}` / `todo_updated{items}` / `subtask_started{subtask_id, goal}` / `subtask_delta{subtask_id, text}` / `subtask_completed{subtask_id}` / `approval_request{request_id, tool, input, reason}` / `token_count{...}` / `turn_completed{turn_id, ended_at, active_ms, state}` / `turn_aborted` / `error{message}`。
+`turn_started{turn_id, started_at}` / `delta{text}` / `tool_started{tool_call_id, name, input}` / `tool_completed{tool_call_id, status, output_preview}` / `todo_updated{items}` / `subtask_started{subtask_id, goal}` / `subtask_delta{subtask_id, text}` / `subtask_completed{subtask_id}` / `approval_request{request_id, tool, input, reason}` / `token_count{...}` / `compacted{tokens_before, tokens_after}` / `turn_completed{turn_id, ended_at, active_ms, state}` / `turn_aborted` / `error{message}`。
 
 ## 6. 配置与观测
 
