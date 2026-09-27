@@ -1,4 +1,4 @@
-# 个人助手 Harness
+# 法律助手 Harness
 
 初版，开发中
 目前已完成基础 Harness 的开发：`scripts_mini_harness/mini_harness.py`
