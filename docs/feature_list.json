@@ -51,9 +51,9 @@
       "id": "BE-005",
       "name": "SSE 流式 turn",
       "description": "Anthropic 兼容流式调用、POST turn 返回 SSE 事件流、turn_manager(同会话单turn 409/跨会话并行)、stop 优雅收尾(部分输出以 stopped 落盘)、token_count 事件、15s 心跳",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 41 passed：SSE 事件序列(turn_started/delta/token_count/turn_completed)与落盘回放一致/断开不杀turn的后台泵模型/同会话409/缺LLM配置400/stop端点404与置位/流中自停止保留部分输出(stopped收口)；AnthropicStreamClient 假客户端注入验证",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-006",
