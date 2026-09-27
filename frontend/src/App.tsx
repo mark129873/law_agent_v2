@@ -24,7 +24,15 @@ export default function App() {
   const [activeSubtask, setActiveSubtask] = useState<{ id: string; goal: string } | null>(null)
 
   // SSE 流式状态（只在当前会话上生效）；liveTurn 即实时轮次
-  const { turn: liveTurn, isStreaming, error: streamError, send, clearTurn } = useSessionStream(currentId)
+  const {
+    turn: liveTurn,
+    isStreaming,
+    error: streamError,
+    send,
+    regenerate,
+    clearTurn,
+    pendingApproval,
+  } = useSessionStream(currentId)
 
   /** 打开历史会话：拉取全量回放（resume 的读取路径） */
   const openSession = useCallback(async (id: string) => {
@@ -76,6 +84,13 @@ export default function App() {
     void stopTurn(currentId)
   }, [currentId])
 
+  /** 错误重试 = 重新生成最后一轮（保留用户消息重跑） */
+  const handleRetry = useCallback(() => {
+    void regenerate(() => {
+      void refreshAfterTurn()
+    })
+  }, [regenerate, refreshAfterTurn])
+
   return (
     <div className="flex h-full">
       {/* 左栏：会话列表 */}
@@ -94,9 +109,12 @@ export default function App() {
         isStreaming={isStreaming}
         currentId={currentId}
         streamError={streamError}
+        livePendingApproval={pendingApproval}
         onSend={handleSend}
         onStop={handleStop}
         onNewSession={handleNewSession}
+        onRegenerate={handleRetry}
+        onApprovalResolved={() => void refreshAfterTurn()}
         onOpenSubtask={setActiveSubtask}
       />
 

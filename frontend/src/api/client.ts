@@ -94,8 +94,22 @@ export async function streamTurn(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
   })
+  await consumeSse(resp, onEvent)
+}
+
+/** 重新生成（保留最后一轮用户消息，回滚重跑；错误重试同机制） */
+export async function streamRegenerate(
+  sessionId: string,
+  onEvent: (event: SseEvent) => void,
+): Promise<void> {
+  const resp = await fetch(`/api/sessions/${sessionId}/regenerate`, { method: 'POST' })
+  await consumeSse(resp, onEvent)
+}
+
+/** SSE 公共消费逻辑：逐块读取 → 分帧 → 解析 → 回调 */
+async function consumeSse(resp: Response, onEvent: (event: SseEvent) => void): Promise<void> {
   if (!resp.ok || !resp.body) {
-    let detail = `发送失败（${resp.status}）`
+    let detail = `请求失败（${resp.status}）`
     try {
       const body = await resp.json()
       if (typeof body.detail === 'string') detail = body.detail

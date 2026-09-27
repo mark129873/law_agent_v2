@@ -9,9 +9,11 @@
 
 import { useEffect, useRef } from 'react'
 
+import { ApprovalModal, pendingFromDetail } from './ApprovalModal'
 import { TokenBadge } from './TokenBadge'
 import { TurnGroup } from './TurnGroup'
 import { Composer } from './Composer'
+import type { PendingApproval } from './ApprovalModal'
 import type { SessionDetail, TurnData } from '../types'
 
 export interface ChatAreaProps {
@@ -20,18 +22,31 @@ export interface ChatAreaProps {
   isStreaming: boolean
   currentId: string | null
   streamError: string | null
+  /** 实时流中的未决审批（useSessionStream） */
+  livePendingApproval: { request_id: string; tool: string; input: unknown; reason: string } | null
   onSend: (text: string) => void
   onStop: () => void
   onNewSession: () => void
+  /** 错误卡片"重试"→ 重新生成（保留用户消息重跑） */
+  onRegenerate: () => void
+  /** 审批决定提交后：父层刷新详情（留痕卡片翻状态） */
+  onApprovalResolved: () => void
   onOpenSubtask?: (s: { id: string; goal: string }) => void
 }
 
 export function ChatArea(props: ChatAreaProps) {
-  const { detail, liveTurn, isStreaming, currentId, streamError, onSend, onStop, onNewSession } = props
+  const {
+    detail, liveTurn, isStreaming, currentId, streamError, livePendingApproval,
+    onSend, onStop, onNewSession, onRegenerate, onApprovalResolved, onOpenSubtask,
+  } = props
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const turns = detail?.turns ?? []
   const hasContent = turns.length > 0 || liveTurn != null
+
+  // 弹窗数据源：实时流优先；否则用回放恢复的未决审批（刷新场景）
+  const modalApproval: PendingApproval | null =
+    livePendingApproval ?? pendingFromDetail(detail)
 
   // 自动滚动：内容变化时贴底
   useEffect(() => {
@@ -75,10 +90,17 @@ export function ChatArea(props: ChatAreaProps) {
         {hasContent ? (
           <div className="mx-auto max-w-3xl space-y-6">
             {turns.map((t) => (
-              <TurnGroup key={t.turn_id} turn={t} onOpenSubtask={props.onOpenSubtask} />
+              <TurnGroup
+                key={t.turn_id}
+                turn={t}
+                onOpenSubtask={onOpenSubtask}
+                onRetry={onRegenerate}
+              />
             ))}
             {/* 正在进行的轮次（或刚完成还未刷新详情） */}
-            {liveTurn && <TurnGroup turn={liveTurn} onOpenSubtask={props.onOpenSubtask} />}
+            {liveTurn && (
+              <TurnGroup turn={liveTurn} onOpenSubtask={onOpenSubtask} onRetry={onRegenerate} />
+            )}
           </div>
         ) : (
           // draft 会话的空对话态
@@ -98,6 +120,15 @@ export function ChatArea(props: ChatAreaProps) {
 
       {/* 输入框 */}
       <Composer disabled={!currentId} streaming={isStreaming} onSend={onSend} onStop={onStop} />
+
+      {/* 审批弹窗：实时请求或刷新恢复的未决审批 */}
+      {modalApproval && currentId && (
+        <ApprovalModal
+          sessionId={currentId}
+          approval={modalApproval}
+          onResolved={onApprovalResolved}
+        />
+      )}
     </main>
   )
 }

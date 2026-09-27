@@ -11,7 +11,7 @@
 
 import { useCallback, useRef, useState } from 'react'
 
-import { streamTurn } from '../api/client'
+import { streamRegenerate, streamTurn } from '../api/client'
 import type { SseEvent, ToolStatus, TurnData, WorkItem } from '../types'
 
 export interface LiveTurnState {
@@ -248,5 +248,25 @@ export function useSessionStream(sessionId: string | null) {
     pendingApprovalRef.current = null
   }, [])
 
-  return { turn, isStreaming, error, tokenCount, send, setError, clearTurn, pendingApproval, setPendingApproval }
+  /** 重新生成（错误重试同机制）：回滚最后一轮回复并重跑，事件走同一归约器 */
+  const regenerate = useCallback(
+    async (onFinished?: () => void) => {
+      if (!sessionId || isStreaming) return
+      setError(null)
+      setIsStreaming(true)
+      turnRef.current = null
+
+      try {
+        await streamRegenerate(sessionId, applyEvent)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '连接中断，可稍后刷新回看进度')
+      } finally {
+        setIsStreaming(false)
+        onFinished?.()
+      }
+    },
+    [sessionId, isStreaming, applyEvent],
+  )
+
+  return { turn, isStreaming, error, tokenCount, send, regenerate, setError, clearTurn, pendingApproval, setPendingApproval }
 }
