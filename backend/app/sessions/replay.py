@@ -284,7 +284,9 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
             result.append({"role": "user", "content": text})
             continue
 
-        # assistant 消息：text 块 + tool_use 块
+        # assistant 消息：先把上一步的 tool_result 补成 user 消息（API 要求
+        # tool_use 后必须紧跟 tool_result），再落本条 assistant
+        flush_tool_results()
         content: list[dict] = []
         for part in parts_by_message.get(msg.id, []):
             data = _part_data(part)

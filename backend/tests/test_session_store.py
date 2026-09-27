@@ -211,3 +211,34 @@ def test_load_history_compact_boundary(store_db) -> None:
     flat = json.dumps(history, ensure_ascii=False)
     assert "第一轮回复" not in flat  # 边界前的正文不再下发
     assert {"role": "user", "content": "第二轮"} in history
+
+
+def test_load_history_two_step_tool_roundtrip(store_db) -> None:
+    """回归：assistant(工具) 后紧跟 assistant(正文) 时，tool_result 必须插在中间。"""
+    store.ensure_session(store_db, "s1", "test-model", "创建文件")
+    store.upsert_message(store_db, "s1", "u1", "user", {"text": "创建文件"}, "t1")
+    # 第一步：text + tool_use
+    store.upsert_message(store_db, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.upsert_part(store_db, "s1", "a1", "pa1", "text", {"text": "我来创建"}, "t1")
+    store.upsert_part(
+        store_db, "s1", "a1", "pc1", "tool_call",
+        {"tool_call_id": "tc1", "name": "write_file", "input": {"path": "a.txt"}, "status": "completed", "output": "ok"},
+        "t1",
+    )
+    # 第二步：工具后的收尾正文（同一轮的第二步）
+    store.upsert_message(store_db, "s1", "a2", "assistant", {"text": ""}, "t1")
+    store.upsert_part(store_db, "s1", "a2", "pa2", "text", {"text": "创建完成"}, "t1")
+    store.upsert_message(store_db, "s1", "u2", "user", {"text": "下一步"}, "t2")
+
+    history = replay.load_history(store_db, "s1")
+    # 期望：u1 → a1(text+tool_use) → user(tool_result) → a2(text) → u2
+    roles = [
+        ("user" if isinstance(m["content"], str) else m["role"]) for m in history
+    ]
+    assert history[0] == {"role": "user", "content": "创建文件"}
+    assert history[1]["role"] == "assistant"
+    assert history[2]["role"] == "user"  # 合成的 tool_result
+    assert history[2]["content"][0]["tool_use_id"] == "tc1"
+    assert history[3]["role"] == "assistant"
+    assert history[3]["content"] == [{"type": "text", "text": "创建完成"}]
+    assert history[4] == {"role": "user", "content": "下一步"}
