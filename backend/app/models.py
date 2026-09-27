@@ -63,6 +63,8 @@ class Message(Base):
         String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True
     )
     sequence: Mapped[int] = mapped_column(Integer, index=True)
+    # turn 标签（ZCode 设计：turn 是行上的标签不是容器），回放按它分组
+    turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
     role: Mapped[str] = mapped_column(String(20))  # user | assistant
     data: Mapped[str] = mapped_column(String, default="{}")
     time_created: Mapped[float] = mapped_column(Float, default=now_ms)
@@ -89,6 +91,8 @@ class Part(Base):
         String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True
     )
     sequence: Mapped[int] = mapped_column(Integer, index=True)
+    # turn 标签（同 message），回放按它归组
+    turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
     kind: Mapped[str] = mapped_column(String(20))
     data: Mapped[str] = mapped_column(String, default="{}")
     time_created: Mapped[float] = mapped_column(Float, default=now_ms)

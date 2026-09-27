@@ -63,6 +63,13 @@ def get_engine() -> Engine:
     return _engine
 
 
+def new_session() -> Session:
+    """开一个新的 ORM 会话（存储层单测与后台任务直接用；调用方负责 close）。"""
+    if _session_factory is None:
+        raise RuntimeError("数据库未初始化：请先调用 init_db()")
+    return _session_factory()
+
+
 def get_db() -> Session:
     """FastAPI 依赖：每个请求一个独立 Session，用完即关。"""
     if _session_factory is None:

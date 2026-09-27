@@ -27,9 +27,9 @@
       "id": "BE-002",
       "name": "会话存储层",
       "description": "ZCode 式存储：session/message/part/session_entry 四表，里程碑式实时 upsert(sequence 冲突保留)，turn 事实(active_ms 排除审批等待)，软删标记，全量回放拼装(按 turn 分组)，pytest 单测",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 13 passed：draft 幂等/sequence 首次分配后保留/工具 part 生命周期单行推进/软删过滤/回放按 turn 分组与末条 text 提升为 final_text/孤儿轮 stopped/审批留痕与未决恢复/load_history 含 tool_use+合成 tool_result 与 compact 边界；tmp-data 自动清理",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-003",
