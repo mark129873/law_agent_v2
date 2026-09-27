@@ -14,6 +14,7 @@ import { TokenBadge } from './TokenBadge'
 import { TurnGroup } from './TurnGroup'
 import { Composer } from './Composer'
 import type { PendingApproval } from './ApprovalModal'
+import type { SubtaskItem } from './SubtaskViewer'
 import type { SessionDetail, TurnData } from '../types'
 
 export interface ChatAreaProps {
@@ -31,7 +32,7 @@ export interface ChatAreaProps {
   onRegenerate: () => void
   /** 审批决定提交后：父层刷新详情（留痕卡片翻状态） */
   onApprovalResolved: () => void
-  onOpenSubtask?: (s: { id: string; goal: string }) => void
+  onOpenSubtask?: (s: SubtaskItem) => void
 }
 
 export function ChatArea(props: ChatAreaProps) {
@@ -94,12 +95,12 @@ export function ChatArea(props: ChatAreaProps) {
                 key={t.turn_id}
                 turn={t}
                 onOpenSubtask={onOpenSubtask}
-                onRetry={onRegenerate}
+                onRegenerate={onRegenerate}
               />
             ))}
             {/* 正在进行的轮次（或刚完成还未刷新详情） */}
             {liveTurn && (
-              <TurnGroup turn={liveTurn} onOpenSubtask={onOpenSubtask} onRetry={onRegenerate} />
+              <TurnGroup turn={liveTurn} onOpenSubtask={onOpenSubtask} onRegenerate={onRegenerate} />
             )}
           </div>
         ) : (

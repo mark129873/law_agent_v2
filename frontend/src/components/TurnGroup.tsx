@@ -19,14 +19,15 @@ import {
   ToolCallCard,
   UserBubble,
 } from './MessageItem'
+import type { SubtaskItem } from './SubtaskViewer'
 import type { TurnData, WorkItem } from '../types'
 
 export interface TurnGroupProps {
   turn: TurnData
   /** 点击 subtask 卡片时打开右侧面板（FE-5 联动） */
-  onOpenSubtask?: (subtask: { id: string; goal: string }) => void
-  /** 错误重试（FE-4 接 /regenerate） */
-  onRetry?: () => void
+  onOpenSubtask?: (subtask: Extract<WorkItem, { kind: 'subtask' }>) => void
+  /** 重新生成（保留用户消息重跑；FE-5 起在最终回复悬停出现） */
+  onRegenerate?: () => void
 }
 
 /** 运行中的本地秒表：仅 running 态每秒跳，其余状态返回 0（不用当前时钟） */
@@ -41,7 +42,7 @@ function useLiveElapsed(startedAt: number, running: boolean): number {
   return running ? Math.max(0, now - startedAt) : 0
 }
 
-export function TurnGroup({ turn, onOpenSubtask, onRetry }: TurnGroupProps) {
+export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps) {
   const running = turn.state === 'running'
   const liveMs = useLiveElapsed(turn.started_at, running)
   // 展示耗时：运行中用本地秒表；结束态用落盘的权威工时（不随时间增长）
@@ -98,14 +99,18 @@ export function TurnGroup({ turn, onOpenSubtask, onRetry }: TurnGroupProps) {
           {/* 块内条目：按时间序平铺 */}
           {open && (
             <div className="space-y-2 border-t border-zinc-100 px-3.5 py-3">
-              {turn.work_items.map((item) => (
-                <WorkItemRow
-                  key={item.kind + item.id + item.time}
-                  item={item}
-                  onOpenSubtask={onOpenSubtask}
-                  onRetry={onRetry}
-                />
-              ))}
+              {aggregateItems(turn.work_items).map((entry) =>
+                entry.kind === 'group' ? (
+                  <GroupCard key={`g-${entry.groupType}-${entry.items[0]?.id}`} group={entry} />
+                ) : (
+                  <WorkItemRow
+                    key={entry.kind + entry.id + entry.time}
+                    item={entry}
+                    onOpenSubtask={onOpenSubtask}
+                    onRetry={onRegenerate}
+                  />
+                ),
+              )}
             </div>
           )}
         </div>
@@ -113,13 +118,100 @@ export function TurnGroup({ turn, onOpenSubtask, onRetry }: TurnGroupProps) {
 
       {/* 最终回复（块外完整渲染）；停止后保留的部分输出也在这里展示 */}
       {turn.final_text && (
-        <div className="px-1">
+        <div className="group px-1">
           <MarkdownWithCopy text={turn.final_text} streaming={running} />
-          {turn.state === 'stopped' && (
-            <p className="mt-1 text-[11px] text-amber-600">已停止，以上为已生成的部分</p>
-          )}
+          <div className="mt-1 flex items-center gap-2">
+            {turn.state === 'stopped' && (
+              <p className="text-[11px] text-amber-600">已停止，以上为已生成的部分</p>
+            )}
+            {/* 重新生成：仅结束态且非重跑进行中出现（悬停显示） */}
+            {!running && onRegenerate && (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="opacity-0 text-[11px] text-zinc-400 transition hover:text-zinc-700 group-hover:opacity-100"
+              >
+                重新生成
+              </button>
+            )}
+          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** 聚合组：连续只读工具 ≥2 → "探索"；连续 bash ≥2 → "执行"（ZCode 桌面端同款） */
+interface WorkGroup {
+  kind: 'group'
+  groupType: 'explore' | 'execute'
+  items: Extract<WorkItem, { kind: 'tool_call' }>[]
+}
+
+function isReadTool(name: string): boolean {
+  return name === 'read_file' || name === 'glob'
+}
+
+function aggregateItems(items: WorkItem[]): (WorkItem | WorkGroup)[] {
+  const out: (WorkItem | WorkGroup)[] = []
+  let i = 0
+  while (i < items.length) {
+    const it = items[i]
+    if (it.kind === 'tool_call') {
+      const readRun = isReadTool(it.name)
+      const bashRun = it.name === 'bash'
+      if (readRun || bashRun) {
+        let j = i + 1
+        while (j < items.length) {
+          const n = items[j]
+          if (n.kind !== 'tool_call') break
+          if (readRun && isReadTool(n.name)) j += 1
+          else if (bashRun && n.name === 'bash') j += 1
+          else break
+        }
+        if (j - i >= 2) {
+          out.push({
+            kind: 'group',
+            groupType: readRun ? 'explore' : 'execute',
+            items: items.slice(i, j) as Extract<WorkItem, { kind: 'tool_call' }>[],
+          })
+          i = j
+          continue
+        }
+      }
+    }
+    out.push(it)
+    i += 1
+  }
+  return out
+}
+
+/** 聚合组卡片：父行表达当前阶段状态，展开看子工具卡 */
+function GroupCard({ group }: { group: WorkGroup }) {
+  const [open, setOpen] = useState(false)
+  const running = group.items.some((x) => x.status === 'running' || x.status === 'pending')
+  const failed = group.items.some((x) => x.status === 'failed')
+  const label = group.groupType === 'explore' ? (running ? '探索中' : '探索') : running ? '执行中' : '执行'
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        aria-expanded={open}
+      >
+        <span className={`text-[13px] font-medium ${running ? 'text-sky-600' : 'text-zinc-700'}`}>{label}</span>
+        <span className="flex-1 text-[12px] text-zinc-400">{group.items.length} 项操作</span>
+        <span className={`text-zinc-300 transition ${open ? 'rotate-90' : ''}`}>›</span>
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-zinc-100 px-3 py-2">
+          {group.items.map((item) => (
+            <ToolCallCard key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+      {failed && <p className="px-3 pb-2 text-[11px] text-red-600">· 有失败项</p>}
     </div>
   )
 }
@@ -131,7 +223,7 @@ function WorkItemRow({
   onRetry,
 }: {
   item: WorkItem
-  onOpenSubtask?: (s: { id: string; goal: string }) => void
+  onOpenSubtask?: (s: SubtaskItem) => void
   onRetry?: () => void
 }) {
   switch (item.kind) {
@@ -182,7 +274,7 @@ function WorkItemRow({
       return (
         <button
           type="button"
-          onClick={() => onOpenSubtask?.({ id: item.id, goal: item.goal })}
+          onClick={() => onOpenSubtask?.(item)}
           className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left transition hover:bg-zinc-50"
         >
           <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-white">SubAgent</span>

@@ -11,6 +11,7 @@ import { useCallback, useState } from 'react'
 
 import { ChatArea } from './components/ChatArea'
 import { Sidebar } from './components/Sidebar'
+import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
 import { createSession, getSessionDetail, stopTurn } from './api/client'
 import { useSessionStream } from './hooks/useSessionStream'
 import type { SessionDetail, SessionItem } from './types'
@@ -20,8 +21,8 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [detail, setDetail] = useState<SessionDetail | null>(null)
-  // 右栏 subtask 状态（FE-5 完成卡片联动）
-  const [activeSubtask, setActiveSubtask] = useState<{ id: string; goal: string } | null>(null)
+  // 右栏 subtask 面板：点击卡片打开（持有同一 work item 引用，流式更新可见）
+  const [activeSubtask, setActiveSubtask] = useState<SubtaskItem | null>(null)
 
   // SSE 流式状态（只在当前会话上生效）；liveTurn 即实时轮次
   const {
@@ -118,21 +119,9 @@ export default function App() {
         onOpenSubtask={setActiveSubtask}
       />
 
-      {/* 右栏：subtask 查看面板（点开才出现，FE-5 实现完整联动） */}
+      {/* 右栏：subtask 查看面板（点击卡片才出现，实时跟随输出增长） */}
       {activeSubtask && (
-        <aside className="w-96 shrink-0 border-l border-zinc-200 bg-white p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-zinc-500">subtask 面板（FE-5 实现）</p>
-            <button
-              type="button"
-              onClick={() => setActiveSubtask(null)}
-              className="text-xs text-zinc-400 hover:text-zinc-600"
-            >
-              关闭
-            </button>
-          </div>
-          <p className="mt-2 text-sm text-zinc-700">{activeSubtask.goal}</p>
-        </aside>
+        <SubtaskViewer subtask={activeSubtask} onClose={() => setActiveSubtask(null)} />
       )}
     </div>
   )
