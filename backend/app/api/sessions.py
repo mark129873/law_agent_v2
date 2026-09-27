@@ -143,6 +143,7 @@ async def start_turn(
         history=history,
         stop_flag=stop_event.is_set,
         approver=InteractiveApprover(turn_db, session_id, recorder, queue),
+        settings=settings,
     )
 
     async def pump() -> None:

@@ -67,9 +67,9 @@
       "id": "BE-007",
       "name": "ZCode compact+microcompact",
       "description": "auto 阈值=窗口-32K输出预留-13K buffer(真实usage优先,失败3次熔断)、固定摘要 prompt、摘要消息为 resume 边界、compaction 事实落库、microcompact 旧工具输出占位(保留最近5条)、单测",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 53 passed：预算公式/真实usage优先判定/microcompact 只清最旧且幂等/摘要后 compaction 事实边界=本轮user sequence-1、内存历史就地重建为[摘要,当前请求]、load_history 摘要置顶且边界前正文不再下发/未超预算跳过/连续3次失败熔断不再调用",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-008",

@@ -22,6 +22,8 @@ class TurnRecorder:
         self._pause_started: float | None = None
         self._paused_ms: float = 0.0
         self.tokens_used = 0
+        # 本轮用户消息的 sequence（compact 边界：在此之前的历史才可被摘要）
+        self.first_user_sequence = 0
 
     @property
     def started_at(self) -> float | None:
@@ -37,9 +39,10 @@ class TurnRecorder:
     def begin_turn(self, user_text: str) -> str:
         """turn 开始：确保会话行存在、落用户消息、记上下文快照。"""
         store.ensure_session(self.db, self.session_id, self.model, user_text)
-        store.upsert_message(
+        user_row = store.upsert_message(
             self.db, self.session_id, new_id(), "user", {"text": user_text}, self.turn_id
         )
+        self.first_user_sequence = user_row.sequence
         store.put_entry(
             self.db,
             self.session_id,

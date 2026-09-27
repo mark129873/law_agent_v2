@@ -45,7 +45,10 @@ async def _auto_approver(tool_name: str, tool_input: dict, reason: str) -> bool:
 
 @dataclass
 class TurnDeps:
-    """一次 turn 的全部依赖（测试可全部注入假实现）。"""
+    """一次 turn 的全部依赖（测试可全部注入假实现）。
+
+    settings 为 None 时禁用压缩检查（单元测试默认禁用，真实端点传入）。
+    """
 
     client: object  # LLM 流式客户端：async stream(system, messages, tools) -> async iterator
     recorder: TurnRecorder
@@ -55,6 +58,8 @@ class TurnDeps:
     approver: Callable = _auto_approver  # async (tool, input, reason) -> bool
     max_steps: int = MAX_STEPS_DEFAULT
     stop_flag: Callable[[], bool] = field(default_factory=lambda: (lambda: False))
+    settings: object = None  # 压缩预算等（None = 禁用压缩）
+    last_input_tokens: int | None = None  # 上一轮真实 input_tokens（无则估算）
 
 
 def _preview(text: str) -> str:
@@ -110,6 +115,13 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
     stop_requested = False
 
     try:
+        # ---- 压缩检查（仅 turn 开始时；未配置 settings 则跳过） ----
+        if deps.settings is not None:
+            from app.agent.compact import maybe_compact
+
+            async for compact_event in maybe_compact(deps):
+                yield compact_event
+
         for _step in range(deps.max_steps):
             # ---- 检查点：停止 ----
             if deps.stop_flag():
