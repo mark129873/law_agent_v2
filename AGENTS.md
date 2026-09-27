@@ -3,27 +3,20 @@
 此项目描述:
 -这是一个个人助手harness
 
-项目目录:
-xxxx
-
-
-
-
 ## 开工流程
 写代码前先做这些事：
-0. 读取scripts_mini_harness/mini_harness.py, 作为此项目harness思想的参考
+0. 读取 scripts_mini_harness/mini_harness.py, 作为此项目harness思想的参考
 1. 用 `pwd` 确认当前目录。
 2. 读取 docs/ARCHITECTURE.md，了解完整架构与数据流定义
 3. 读取 docs/PRODUCT.md，了解功能需求与用户侧交互行为
 4. 读取 docs/RELIABILITY.md，了解日志、可观测性以及干净环境的相关要求
-5. 读取 progress.md，了解最新会话进度日志
-6. 读取 feature_list.json，确认当前所有功能的开发进度
-7. 读取 session‑handoff.md 获取记录当前会话的交接摘要, 上一轮交接信息
+5. 读取 docs/progress.md，了解最新会话进度日志
+6. 读取 docs/feature_list.json，确认当前所有功能的开发进度
+7. 读取 docs/session‑handoff.md 获取记录当前会话的交接摘要, 上一轮交接信息
 8. 用 `git log --oneline -5` 看最近提交
 <!-- 9. 按需执行`init.md`的内容, 确保项目可正常构建或启动、初始化无异常。 -->
 <!-- 10. 在开始新功能前，先跑你认为必需的测试与验证(测试前先根据 docs/RELIABILITY.md 进行测试干净环境管理) -->
 <!-- 11. 如果9和10的验证一开始就失败，先修基础状态，不要在坏的起点上继续叠新功能。 -->
-
 
 ## 工作规则
 - 新增功能时，请**先更新对应文档，再编写代码**。
@@ -37,17 +30,17 @@ xxxx
 一个功能只有在以下条件都满足时才算完成：
 - 目标行为已经实现
 - 你认为必要的验证真的跑过
-- feature_list.json 文件内该功能状态标记为 "passing", 并附上验证证据
+- docs/feature_list.json 文件内该功能状态标记为 "passing", 并附上验证证据
 - docs/ARCHITECTURE.md 和 docs/PRODUCT.md 文档同步更新
 - 仓库仍然能按标准启动路径重新开始工作
 - 在工作处于安全状态后, 代码已提交到git仓库, 提交信息清晰，符合项目规范。
 
 ## 收尾
 结束会话前：
-- 更新 `progress.md`
-- 更新 `feature_list.json`
-- 更新 `session‑handoff.md`, 记录仍未解决的风险或 blocker
-- 确认 clean‑state‑checklist.md 所有校验项通过。
+- 更新 docs/progress.md
+- 更新 docs/feature_list.json
+- 更新 docs/session‑handoff.md, 记录仍未解决的风险或 blocker
+- 确认 docs/clean‑state‑checklist.md 所有校验项通过。
 - 在工作处于安全状态后，用清晰的提交信息提交
 
 ## 后端代码规范
@@ -58,4 +51,17 @@ xxxx
 - 要求代码必须包含详细中文注释, 并解释做了什么, 这么做的原因, 适合0基础开发
 - 代码要求简洁精炼, 避免使用复杂的语法或模式, 保持代码结构清晰
 
+## 项目目录
+一级目录:
+- backend/ — 后端代码
+- frontend/ — 前端代码
+- docs/ — 项目文档
+- scripts_mini_harness/ — harness 思想的参考实现: mini_harness.py 及配套 skills、test
+- tmp/ — 临时文件目录(不入库, 可随时清空)
 
+项目开发参考目录(.开头):
+- .github_claude-for-legal/ — Claude for Legal 参考仓库
+- .github_claude-for-legal-zh-cn/ — 上一仓库的中文翻译版(结构与英文版一致)
+- .github_claude-for-legal-ZH/ — Claude for Legal ZH 参考仓库 (基于claude-for-legal适配中国版)
+- .github_codex/ — OpenAI Codex CLI 源码仓库克隆, agent harness工程实现参考
+- .github_learn-claude-code/ — learn-claude-code 教程仓库克隆, agent harness思想参考
