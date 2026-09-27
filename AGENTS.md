@@ -20,7 +20,7 @@
 
 ## 工作规则
 - 新增功能时，请**先更新对应文档，再编写代码**。
-- 一次只做一个功能。
+- 同时只做一个功能, 串行开发。
 - 不要因为“代码已经写了”就把功能标记为完成。
 - 除非为了消除当前 blocker 的窄范围修复，否则不要扩大到其他功能。
 - 实现过程中不要悄悄改弱验证规则。
@@ -64,4 +64,5 @@
 - .github_claude-for-legal-zh-cn/ — 上一仓库的中文翻译版(结构与英文版一致)
 - .github_claude-for-legal-ZH/ — Claude for Legal ZH 参考仓库 (基于claude-for-legal适配中国版)
 - .github_codex/ — OpenAI Codex CLI 源码仓库克隆, agent harness工程实现参考
+- .github_ZCode/ — ZCode 源码仓库克隆, agent harness工程实现参考
 - .github_learn-claude-code/ — learn-claude-code 教程仓库克隆, agent harness思想参考
