@@ -19,7 +19,6 @@ export interface LiveTurnState {
   isStreaming: boolean
   error: string | null
   tokenCount: { input: number; output: number } | null
-  /** 收口时把"生成中草稿"固化为最终回复（send 返回 promise 便于调用方刷新） */
 }
 
 export function useSessionStream(sessionId: string | null) {
@@ -27,9 +26,17 @@ export function useSessionStream(sessionId: string | null) {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tokenCount, setTokenCount] = useState<{ input: number; output: number } | null>(null)
+  // 未决审批（FE-4 弹窗数据源）：approval_request 置入，approval_resolved 清除
+  const [pendingApproval, setPendingApproval] = useState<
+    { request_id: string; tool: string; input: unknown; reason: string } | null
+  >(null)
 
   // 用 ref 持有正在构建的 turn，避免闭包读到旧状态
   const turnRef = useRef<TurnData | null>(null)
+  // 本轮发送的文本：turn_started 到达时用于立即显示用户气泡
+  const sentTextRef = useRef('')
+  // 未决审批的镜像 ref（事件归约器内读取，避免闭包旧值）
+  const pendingApprovalRef = useRef<{ request_id: string } | null>(null)
 
   const appendItem = useCallback((item: WorkItem) => {
     if (turnRef.current) {
@@ -50,7 +57,7 @@ export function useSessionStream(sessionId: string | null) {
             started_at: event.started_at,
             ended_at: null,
             active_ms: null,
-            user_message: null, // 由调用方在 send 前填充（本地即时显示）
+            user_message: { id: 'local', text: sentTextRef.current, time: Date.now() },
             work_items: [],
             final_text: null,
           }
@@ -154,6 +161,13 @@ export function useSessionStream(sessionId: string | null) {
             status: 'requested',
             time: Date.now(),
           })
+          setPendingApproval({
+            request_id: event.request_id,
+            tool: event.tool,
+            input: event.input,
+            reason: event.reason,
+          })
+          pendingApprovalRef.current = { request_id: event.request_id }
           break
 
         case 'approval_resolved':
@@ -165,6 +179,7 @@ export function useSessionStream(sessionId: string | null) {
             )
             setTurn({ ...cur })
           }
+          if (pendingApprovalRef.current?.request_id === event.request_id) setPendingApproval(null)
           break
 
         case 'token_count':
@@ -206,8 +221,10 @@ export function useSessionStream(sessionId: string | null) {
     async (text: string, onFinished?: () => void) => {
       if (!sessionId || isStreaming) return
       setError(null)
+      setPendingApproval(null)
       setIsStreaming(true)
       setTokenCount(null)
+      sentTextRef.current = text
       turnRef.current = null
 
       try {
@@ -223,5 +240,13 @@ export function useSessionStream(sessionId: string | null) {
     [sessionId, isStreaming, applyEvent],
   )
 
-  return { turn, isStreaming, error, tokenCount, send, setError }
+  /** 清空实时轮次（切换会话/详情刷新后由调用方触发） */
+  const clearTurn = useCallback(() => {
+    turnRef.current = null
+    setTurn(null)
+    setPendingApproval(null)
+    pendingApprovalRef.current = null
+  }, [])
+
+  return { turn, isStreaming, error, tokenCount, send, setError, clearTurn, pendingApproval, setPendingApproval }
 }
