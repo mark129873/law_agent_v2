@@ -99,41 +99,41 @@
       "id": "FE-001",
       "name": "前端脚手架+三栏布局",
       "description": "Vite+React18+TS+Tailwind v4、三栏布局(侧栏/对话流/subtask面板)、浅色 zinc 主题、中文 UI、api/client.ts(fetch+SSE 解析)、types.ts、Vite 代理 /api→8000、npm build 通过",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "npm run build 通过(Vite+React18+TS+Tailwind v4)；三栏布局、types.ts(SSE/回放契约)、api/client.ts(fetch+SSE 分帧解析)、useSessionStream 归约器、/api 代理 8100",
+      "testedAt": "2026-09-28"
     },
     {
       "id": "FE-002",
       "name": "会话列表+呼吸点+空状态",
       "description": "侧栏会话列表(标题/时间/token数/更新时间倒序)、新建(接 POST)、删除(确认弹窗)、生成中呼吸点轮询、空状态欢迎页、浏览器手测",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "浏览器实测：新建(draft 空对话态)、列表标题截断/时间/token、两步删除确认、5s 轮询呼吸点、空状态欢迎页",
+      "testedAt": "2026-09-28"
     },
     {
       "id": "FE-003",
       "name": "TurnGroup 工作块+流式聊天",
       "description": "TurnGroup(块头状态机:工作中/已工作/已停止+每秒tick+自动收起+codex耗时阶梯)、SSE 流式渲染、MessageItem(react-markdown+rehype-highlight+复制)、工具卡(二级折叠+输出预览)、TodoCard、Composer(Enter/Shift+Enter+停止)、浏览器手测",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "浏览器实测：工作块状态机(工作中秒表→已工作自动收起→已停止强制展开)、codex 耗时阶梯、流式 delta、Markdown+代码高亮+复制、工具卡二级折叠、任务板卡片、Enter/Shift+Enter、停止按钮",
+      "testedAt": "2026-09-28"
     },
     {
       "id": "FE-004",
       "name": "审批弹窗+token徽标+错误重试",
       "description": "ApprovalModal(SSE 事件驱动+刷新恢复)、审批留痕卡、TokenBadge(会话头部用量进度)、ErrorCard(内联+重试)、停止后保留部分输出(已停止标记)、浏览器手测",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "浏览器实测：审批弹窗(实时 approval_request 与刷新回放恢复双源)、审批卡片留痕、TokenBadge(119→170 tok)、错误卡片+重试(接线 regenerate)、停止后部分输出保留",
+      "testedAt": "2026-09-28"
     },
     {
       "id": "FE-005",
       "name": "重新生成+subtask 面板联调",
       "description": "重新生成按钮(保留用户消息回滚重跑)、SubtaskCard+右侧 SubtaskViewer(实时/历史输出)、探索/执行聚合组、已压缩提示、全流程浏览器联调",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "浏览器实测：重新生成按钮(保留用户消息重跑)、subtask 卡片+右侧面板(实时输出)、连续只读≥2 聚合探索组/bash≥2 聚合执行组、已压缩提示；E2E 全流程联调通过",
+      "testedAt": "2026-09-28"
     }
   ]
 }
