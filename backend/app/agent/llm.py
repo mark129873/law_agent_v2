@@ -47,10 +47,16 @@ class AnthropicStreamClient:
         ) as stream:
             tool_meta: dict[int, dict] = {}  # 块索引 -> {id,name}
             json_fragments: dict[int, str] = {}  # 块索引 -> 攒参数 JSON 分片
+            usage = {"input_tokens": 0, "output_tokens": 0}
 
             async for event in stream:
                 etype = event.type
-                if etype == "content_block_start":
+                if etype == "message_start":
+                    # 输入 token 在消息开始时给出
+                    msg_usage = getattr(event.message, "usage", None)
+                    if msg_usage is not None:
+                        usage["input_tokens"] = getattr(msg_usage, "input_tokens", 0) or 0
+                elif etype == "content_block_start":
                     block = event.content_block
                     if getattr(block, "type", "") == "tool_use":
                         tool_meta[event.index] = {"id": block.id, "name": block.name}
@@ -77,14 +83,19 @@ class AnthropicStreamClient:
                             "name": meta["name"],
                             "input": args,
                         }
+                elif etype == "message_delta":
+                    # 输出 token 随 message_delta 累计给出
+                    msg_usage = getattr(event, "usage", None)
+                    if msg_usage is not None:
+                        usage["output_tokens"] = getattr(msg_usage, "output_tokens", 0) or 0
 
-            # 流结束：真实 token 用量（usage 事件驱动 token_count 与工时累计）
-            final = stream.get_final_message()
-            usage = final.usage
+            # 流结束：真实 token 用量（usage 事件驱动 token_count 与工时累计）。
+            # 不用 get_final_message()：SDK 里它是协程（需 await），直接从流事件
+            # 攒 usage 更直观且避免版本差异。
             yield {
                 "type": "usage",
-                "input_tokens": getattr(usage, "input_tokens", 0) or 0,
-                "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+                "input_tokens": usage["input_tokens"],
+                "output_tokens": usage["output_tokens"],
             }
 
 
