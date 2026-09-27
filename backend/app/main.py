@@ -24,6 +24,10 @@ async def lifespan(app: FastAPI):
     (settings.data_dir / "workspace").mkdir(parents=True, exist_ok=True)
     setup_logging(settings.data_dir, settings.log_level)
     db.init_db(settings.data_dir)
+    # 默认 hooks：工具调用的工程事件日志（PreToolUse/PostToolUse）
+    from app.agent import hooks
+
+    hooks.register_default_hooks()
 
     import logging
 

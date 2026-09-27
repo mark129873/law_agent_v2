@@ -1,0 +1,289 @@
+"""agent 主循环：mini_harness §10 的移植，形态改为异步事件生成器。
+
+一个 turn = 一次 run_turn() 调用：
+  用户输入 → [压缩检查(BE-7)] → LLM 流式调用 → 有 tool_use 则
+  过权限闸门 → 审批回调(BE-6 接交互) → 线程池执行 → 结果回填续轮；
+  无 tool_use 且 Stop hook 无注入则收口。
+
+设计约定：
+- 事件即产物：循环是 async generator，逐个 yield 事件 dict（SSE 层直接转发）；
+- 错误不打断循环：工具异常由 execute_tool 转成 Error 字符串（tools.py），
+  LLM 异常转成 error 事件并以 failed 收口；
+- stop_flag 在每个检查点轮询：流中、每个工具执行前、每轮开始；
+  命中即以 stopped 收口，已生成的部分已落盘（停止后保留部分输出）；
+- 工时记账：审批等待前后调 recorder.pause/resume，active_ms 不含等待。
+"""
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import AsyncIterator, Callable
+
+from app.agent import hooks, permissions
+from app.agent.tools import TOOLS, execute_tool
+from app.sessions.recorder import TurnRecorder
+
+logger = logging.getLogger(__name__)
+
+# 单 turn 的模型步上限（安全阀；mini_harness 子循环 30 轮同思想）
+MAX_STEPS_DEFAULT = 40
+
+# 输出预览长度：SSE 事件里只带预览，全文走回放接口
+_PREVIEW_LEN = 400
+
+
+async def _auto_approver(tool_name: str, tool_input: dict, reason: str) -> bool:
+    """默认审批回调：BE-4 阶段自动批准（BE-6 替换为 SSE 交互审批）。
+
+    为什么默认放行：BE-4 只验证循环与权限分档逻辑本身；交互审批是
+    BE-6 的独立功能，届时通过 TurnDeps.approver 注入，循环不改一行。
+    """
+    return True
+
+
+@dataclass
+class TurnDeps:
+    """一次 turn 的全部依赖（测试可全部注入假实现）。"""
+
+    client: object  # LLM 流式客户端：async stream(system, messages, tools) -> async iterator
+    recorder: TurnRecorder
+    system_prompt: str
+    history: list = field(default_factory=list)  # Anthropic messages 形态，原地追加
+    tools: list = field(default_factory=lambda: list(TOOLS))
+    approver: Callable = _auto_approver  # async (tool, input, reason) -> bool
+    max_steps: int = MAX_STEPS_DEFAULT
+    stop_flag: Callable[[], bool] = field(default_factory=lambda: (lambda: False))
+
+
+def _preview(text: str) -> str:
+    """工具输出的事件预览（全文走回放接口）。"""
+    return text if len(text) <= _PREVIEW_LEN else text[:_PREVIEW_LEN] + "…"
+
+
+def _is_error_output(output: str) -> bool:
+    """mini_harness 约定：Error 开头的输出代表工具执行失败。"""
+    return isinstance(output, str) and output.startswith("Error:")
+
+
+def _part_id_for(tool_call_id: str) -> str:
+    """工具部件的稳定行 id：同一次调用的多次状态推进写同一行。"""
+    return f"tl{uuid.uuid4().hex[:30]}"  # 32 字符以内
+
+
+def _last_user_text(history: list) -> str:
+    """取用户输入文本（历史最后一条 user 消息由 BE-5 端点压入）。"""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            content = msg.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(b.get("text", "") for b in content if b.get("type") == "text")
+    return ""
+
+
+def _assistant_blocks(text: str, tool_uses: list[dict]) -> list[dict]:
+    """构造回填历史的 assistant 内容块（text + tool_use）。"""
+    blocks: list[dict] = []
+    if text:
+        blocks.append({"type": "text", "text": text})
+    for tool_use in tool_uses:
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": tool_use["id"],
+                "name": tool_use["name"],
+                "input": tool_use.get("input") or {},
+            }
+        )
+    return blocks
+
+
+async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
+    """执行一个回复轮次，逐个吐事件。最终事件必为 turn_completed。"""
+    turn_id = deps.recorder.begin_turn(user_text=_last_user_text(deps.history))
+    yield {"type": "turn_started", "turn_id": turn_id, "started_at": deps.recorder.started_at}
+
+    state = "success"
+    stop_requested = False
+
+    try:
+        for _step in range(deps.max_steps):
+            # ---- 检查点：停止 ----
+            if deps.stop_flag():
+                stop_requested = True
+                break
+
+            # ---- LLM 流式调用（一个模型步） ----
+            message_id = deps.recorder.step_message()
+            text_acc = ""
+            tool_uses: list[dict] = []
+            try:
+                async for event in deps.client.stream(
+                    system=deps.system_prompt, messages=deps.history, tools=deps.tools
+                ):
+                    if deps.stop_flag():
+                        stop_requested = True
+                        break
+                    kind = event.get("type")
+                    if kind == "text_delta":
+                        text_acc += event.get("text", "")
+                        yield {"type": "delta", "text": event.get("text", "")}
+                    elif kind == "tool_use":
+                        tool_uses.append(event)
+                    elif kind == "usage":
+                        deps.recorder.add_tokens(event.get("output_tokens", 0))
+                        yield {
+                            "type": "token_count",
+                            "input_tokens": event.get("input_tokens", 0),
+                            "output_tokens": event.get("output_tokens", 0),
+                        }
+            except Exception as exc:  # LLM 层异常：转 error 事件，failed 收口
+                logger.exception("LLM 调用失败")
+                deps.recorder.write_error_part(message_id, str(exc))
+                yield {"type": "error", "message": str(exc)}
+                state = "failed"
+                break
+
+            # ---- 里程碑落盘：正文与工具调用（pending 态） ----
+            if text_acc:
+                deps.recorder.write_text_part(message_id, text_acc)
+            part_ids: dict[str, str] = {}
+            for tool_use in tool_uses:
+                part_id = _part_id_for(tool_use["id"])
+                part_ids[tool_use["id"]] = part_id
+                deps.recorder.upsert_tool_part(
+                    message_id,
+                    part_id,
+                    {
+                        "tool_call_id": tool_use["id"],
+                        "name": tool_use["name"],
+                        "input": tool_use.get("input") or {},
+                        "status": "pending",
+                    },
+                )
+
+            if stop_requested:
+                # 流中途被停：已生成的部分已落盘，以 stopped 收口
+                break
+
+            # ---- 无工具调用：本轮结束（Stop hook 可注入内容强制续轮） ----
+            if not tool_uses:
+                deps.history.append({"role": "assistant", "content": text_acc})
+                injection = hooks.trigger("Stop", {"turn_id": turn_id, "steps": _step + 1})
+                if injection:
+                    deps.history.append({"role": "user", "content": injection})
+                    continue
+                break
+
+            # ---- 工具执行：权限闸门 → 审批 → 线程池执行 ----
+            deps.history.append(
+                {"role": "assistant", "content": _assistant_blocks(text_acc, tool_uses)}
+            )
+            tool_results: list[dict] = []
+            for tool_use in tool_uses:
+                if deps.stop_flag():
+                    stop_requested = True
+                    break
+                result = await _execute_one(deps, message_id, tool_use, part_ids[tool_use["id"]])
+                for ev in result["events"]:
+                    yield ev
+                tool_results.append(result["tool_result"])
+
+            if stop_requested:
+                break
+            if tool_results:
+                deps.history.append({"role": "user", "content": tool_results})
+        else:
+            # 步数用尽（安全阀）
+            yield {"type": "error", "message": f"达到单轮步数上限 {deps.max_steps}"}
+            state = "failed"
+    except Exception as exc:  # 循环级兜底：任何意外都不允许吞掉收口事件
+        logger.exception("turn 循环异常")
+        yield {"type": "error", "message": str(exc)}
+        state = "failed"
+
+    if stop_requested:
+        state = "stopped"
+    fact = deps.recorder.end_turn(state)
+    yield {
+        "type": "turn_completed",
+        "turn_id": turn_id,
+        "ended_at": fact["ended_at"],
+        "active_ms": fact["active_ms"],
+        "state": state,
+    }
+
+
+async def _execute_one(deps: TurnDeps, message_id: str, tool_use: dict, part_id: str) -> dict:
+    """单个工具调用：权限分档 → 审批 → 执行 → 落盘 + 事件。
+
+    返回 {"events": [...], "tool_result": {...}}。
+    约定：denied（策略拒绝/用户拒绝）不执行、不发 tool_started，只发结果卡。
+    """
+    name = tool_use["name"]
+    tool_input = tool_use.get("input") or {}
+    call_id = tool_use["id"]
+    started = time.time()
+
+    hooks.trigger("PreToolUse", {"name": name, "tool_call_id": call_id})
+
+    decision, reason = permissions.check(name, tool_input)
+    status = "completed"
+    output: str | None = None
+
+    if decision == "deny":
+        output = f"Error: 已被安全策略拒绝：{reason}"
+        status = "denied"
+    else:
+        if decision == "approve":
+            # 审批等待不计入有效工时（active_ms 口径）
+            deps.recorder.pause_active()
+            try:
+                approved = await deps.approver(name, tool_input, reason or "高危操作")
+            finally:
+                deps.recorder.resume_active()
+            if not approved:
+                output = f"Error: 用户拒绝了该操作：{reason or '高危操作'}"
+                status = "denied"
+
+        if output is None:
+            deps.recorder.upsert_tool_part(
+                message_id, part_id,
+                {"tool_call_id": call_id, "name": name, "input": tool_input, "status": "running"},
+            )
+            output = await asyncio.to_thread(execute_tool, name, tool_input)
+            if _is_error_output(output):
+                status = "failed"
+
+    duration_ms = (time.time() - started) * 1000
+    deps.recorder.upsert_tool_part(
+        message_id, part_id,
+        {
+            "tool_call_id": call_id, "name": name, "input": tool_input,
+            "status": status, "output": output, "duration_ms": duration_ms,
+        },
+    )
+    hooks.trigger(
+        "PostToolUse",
+        {"name": name, "tool_call_id": call_id, "status": status, "duration_ms": duration_ms},
+    )
+
+    events: list[dict] = []
+    if status in ("completed", "failed"):
+        events.append(
+            {"type": "tool_started", "tool_call_id": call_id, "name": name, "input": tool_input}
+        )
+    events.append(
+        {
+            "type": "tool_completed",
+            "tool_call_id": call_id,
+            "name": name,
+            "status": status,
+            "output_preview": _preview(output or ""),
+        }
+    )
+    tool_result = {"type": "tool_result", "tool_use_id": call_id, "content": output or ""}
+    return {"events": events, "tool_result": tool_result}

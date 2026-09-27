@@ -43,9 +43,9 @@
       "id": "BE-004",
       "name": "agent 核心",
       "description": "mini_harness 移植：TOOLS/TOOL_HANDLERS 双表(6基础工具)、safe_path 沙箱(workspace/)、权限闸门(deny硬拒/高危审批/自动)、hooks 四事件点、错误转 tool_result、PowerShell 执行、pytest",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 36 passed：safe_path 越界拒绝/文件工具真实读写改列删(.rubbish 可找回)/edit 恰好一次/echo 白名单/权限四档(deny·删除审批·高危审批·放行)/假 LLM 驱动循环(纯文本收口·工具往返·策略拒·审批拒批·流中停止部分输出保留·LLM 异常 failed 收口)，tmp-data 自动清理",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-005",
