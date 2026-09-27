@@ -63,6 +63,7 @@ class InteractiveApprover:
                 "status": "requested",
                 "time": now_ms(),
             },
+            turn_id=self.recorder.turn_id,
         )
         # 2. 推审批请求给前端（循环阻塞中，由这里直推队列）
         await self.queue.put(
@@ -92,6 +93,7 @@ class InteractiveApprover:
                 "status": "approved" if approved else "denied",
                 "time": now_ms(),
             },
+            turn_id=self.recorder.turn_id,
         )
         # 5. 通知前端结果（审批卡片翻转状态）
         await self.queue.put(

@@ -49,12 +49,14 @@ def load_replay(
     compactions: list[dict] = []
     for entry in list_entries(db, session_id):
         data = entry_data(entry)
+        # turn_id 优先取列（新数据），回退 data JSON（兼容）
+        turn_label = entry.turn_id or data.get("turn_id", "")
         if entry.type == "turn":
             turn_facts[data.get("turn_id", "")] = data
         elif entry.type == "approval":
-            approvals.append(data)
+            approvals.append({**data, "turn_id": turn_label})
         elif entry.type == "compaction":
-            compactions.append(data)
+            compactions.append({**data, "turn_id": turn_label})
 
     # --- 消息与部件 ---
     messages = list(

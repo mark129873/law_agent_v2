@@ -83,9 +83,9 @@
       "id": "BE-009",
       "name": "重新生成",
       "description": "按 sequence 回滚指定 turn 之后的行(软删标记)+保留用户消息重跑；错误重试复用同机制；边界测试",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 63 passed：regenerate 全流程(旧回复与旧 turn 事实删除、用户消息保留并改挂新轮、新回复落盘、模型历史仅 user+新 assistant)/draft 会话 404/进行中 409；session_entry 增加 turn_id 列支撑按轮回滚",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-010",

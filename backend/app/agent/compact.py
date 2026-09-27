@@ -216,6 +216,7 @@ async def maybe_compact(deps) -> AsyncIterator[dict]:
             "tokens_after": estimate_tokens(summary_text),
             "time": deps.recorder.started_at,
         },
+        turn_id=deps.recorder.turn_id,
     )
     # 就地重建内存历史：摘要 + 当前用户消息
     deps.history[:] = [

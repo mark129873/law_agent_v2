@@ -120,11 +120,8 @@ async def start_turn(
     client: object = Depends(get_llm_client),
 ) -> StreamingResponse:
     """发送用户消息，响应即 SSE 事件流（前端用 fetch ReadableStream 消费）。"""
-    missing = validate_llm_config(settings)
-    if missing:
-        raise HTTPException(status_code=400, detail=f"缺少 LLM 配置：{','.join(missing)}")
-    if turn_manager.is_running(session_id):
-        raise HTTPException(status_code=409, detail="该会话正在生成中")
+    _check_llm_config()
+    _check_not_running(session_id)
 
     # turn 使用独立 DB 会话：HTTP 请求结束时请求级会话会关闭，
     # 而后台泵任务要一直用到 turn 收口。
@@ -146,6 +143,69 @@ async def start_turn(
         settings=settings,
         queue=queue,
     )
+    return _turn_sse_response(session_id, recorder, stop_event, deps, turn_db)
+
+
+@router.post("/{session_id}/regenerate")
+async def regenerate_turn(
+    session_id: str,
+    client: object = Depends(get_llm_client),
+) -> StreamingResponse:
+    """重新生成：保留最后一轮的用户消息，回滚其后内容并重跑（错误重试同机制）。"""
+    _check_llm_config()
+    _check_not_running(session_id)
+
+    turn_db = db.new_session()
+    last_user = store.find_last_user_message(turn_db, session_id)
+    if last_user is None:
+        turn_db.close()
+        raise HTTPException(status_code=404, detail="没有可重新生成的轮次")
+
+    recorder = TurnRecorder(turn_db, session_id, model=settings.model_id, max_tokens=settings.max_tokens)
+    stop_event = turn_manager.register(session_id, recorder.turn_id)
+
+    # 回滚：删该轮 assistant 行（级联 parts）与该轮事实；用户消息保留并改挂新轮
+    store.rollback_turn(turn_db, session_id, last_user.turn_id, last_user.sequence)
+    last_user.turn_id = recorder.turn_id
+    turn_db.commit()
+
+    history = replay.load_history(turn_db, session_id)  # 以保留的用户消息结尾
+
+    queue: asyncio.Queue = asyncio.Queue()
+    deps = TurnDeps(
+        client=client,
+        recorder=recorder,
+        system_prompt=_load_system_prompt(),
+        history=history,
+        stop_flag=stop_event.is_set,
+        approver=InteractiveApprover(turn_db, session_id, recorder, queue),
+        settings=settings,
+        queue=queue,
+        persist_user_message=False,  # 用户消息已存在，不重复落盘
+        user_sequence=last_user.sequence,
+    )
+    return _turn_sse_response(session_id, recorder, stop_event, deps, turn_db)
+
+
+def _check_llm_config() -> None:
+    """发起对话前的 LLM 配置校验（健康检查不依赖它，方便无钥测试）。"""
+    missing = validate_llm_config(settings)
+    if missing:
+        raise HTTPException(status_code=400, detail=f"缺少 LLM 配置：{','.join(missing)}")
+
+
+def _check_not_running(session_id: str) -> None:
+    """同会话单 turn：已在生成中则 409。"""
+    if turn_manager.is_running(session_id):
+        raise HTTPException(status_code=409, detail="该会话正在生成中")
+
+
+def _turn_sse_response(
+    session_id: str, recorder, stop_event, deps: TurnDeps, turn_db
+) -> StreamingResponse:
+    """turn 的公共 SSE 出口：后台泵任务 + 队列 + 心跳（start_turn/regenerate 共用）。"""
+    queue: asyncio.Queue = asyncio.Queue()
+    deps.queue = queue
 
     async def pump() -> None:
         """把循环事件泵进队列；收口后注销并关闭独立会话。"""

@@ -36,18 +36,29 @@ class TurnRecorder:
 
     # ---------- 生命周期 ----------
 
-    def begin_turn(self, user_text: str) -> str:
-        """turn 开始：确保会话行存在、落用户消息、记上下文快照。"""
-        store.ensure_session(self.db, self.session_id, self.model, user_text)
-        user_row = store.upsert_message(
-            self.db, self.session_id, new_id(), "user", {"text": user_text}, self.turn_id
-        )
-        self.first_user_sequence = user_row.sequence
+    def begin_turn(
+        self, user_text: str, persist_user: bool = True, user_sequence: int | None = None
+    ) -> str:
+        """turn 开始：确保会话行存在、落用户消息、记上下文快照。
+
+        persist_user=False 用于重新生成：用户消息已存在（保留的那条），
+        不再新落一条；user_sequence 直接采用既有消息的 sequence。
+        """
+        if persist_user:
+            store.ensure_session(self.db, self.session_id, self.model, user_text)
+            user_row = store.upsert_message(
+                self.db, self.session_id, new_id(), "user", {"text": user_text}, self.turn_id
+            )
+            self.first_user_sequence = user_row.sequence
+        else:
+            # 重新生成：会话行必然已存在，锚定保留的那条用户消息
+            self.first_user_sequence = user_sequence or 0
         store.put_entry(
             self.db,
             self.session_id,
             "context",
             {"model": self.model, "max_tokens": self.max_tokens, "time": now_ms()},
+            turn_id=self.turn_id,
         )
         self._started_at = now_ms()
         return self.turn_id
@@ -79,7 +90,7 @@ class TurnRecorder:
             "state": state,
             "tokens_used": self.tokens_used,
         }
-        store.put_entry(self.db, self.session_id, "turn", fact)
+        store.put_entry(self.db, self.session_id, "turn", fact, turn_id=self.turn_id)
         # 会话累计 token：直接累加（重新生成时会由 BE-9 重算修正）
         from app.models import Session
 

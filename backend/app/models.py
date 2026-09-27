@@ -107,6 +107,8 @@ class SessionEntry(Base):
     - approval:   {"request_id","tool","approved","time"}                  审批留痕
     - compaction: {"summary_message_id","tokens_before","tokens_after"}     压缩事实
     - context:    {"model","max_tokens","system_prompt_mtime"}              每 turn 上下文快照
+
+    turn_id 列：事实所属轮次的标签（重新生成回滚时按它删除该轮事实）。
     """
 
     __tablename__ = "session_entry"
@@ -116,5 +118,6 @@ class SessionEntry(Base):
         String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True
     )
     type: Mapped[str] = mapped_column(String(20), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
     data: Mapped[str] = mapped_column(String, default="{}")
     time_created: Mapped[float] = mapped_column(Float, default=now_ms)

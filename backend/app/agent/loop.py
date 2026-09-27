@@ -61,6 +61,8 @@ class TurnDeps:
     settings: object = None  # 压缩预算等（None = 禁用压缩）
     last_input_tokens: int | None = None  # 上一轮真实 input_tokens（无则估算）
     queue: object | None = None  # SSE 事件队列（subtask/todo_write 直推事件用）
+    persist_user_message: bool = True  # 重新生成时为 False（用户消息已存在）
+    user_sequence: int | None = None  # 重新生成时锚定的既有用户消息 sequence
 
 
 def _preview(text: str) -> str:
@@ -109,7 +111,11 @@ def _assistant_blocks(text: str, tool_uses: list[dict]) -> list[dict]:
 
 async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
     """执行一个回复轮次，逐个吐事件。最终事件必为 turn_completed。"""
-    turn_id = deps.recorder.begin_turn(user_text=_last_user_text(deps.history))
+    turn_id = deps.recorder.begin_turn(
+        user_text=_last_user_text(deps.history),
+        persist_user=deps.persist_user_message,
+        user_sequence=deps.user_sequence,
+    )
     yield {"type": "turn_started", "turn_id": turn_id, "started_at": deps.recorder.started_at}
 
     state = "success"

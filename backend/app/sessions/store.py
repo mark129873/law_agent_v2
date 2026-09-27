@@ -11,7 +11,7 @@
 
 import json
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.models import Message, Part, Session, SessionEntry, new_id, now_ms
@@ -165,18 +165,56 @@ def upsert_part(
     return row
 
 
-def put_entry(db: DbSession, session_id: str, entry_type: str, data: dict) -> SessionEntry:
+def put_entry(
+    db: DbSession, session_id: str, entry_type: str, data: dict, turn_id: str = ""
+) -> SessionEntry:
     """追加一条会话级事实（turn/approval/compaction/context）。事实不可变，只插入。"""
     row = SessionEntry(
         id=new_id(),
         session_id=session_id,
         type=entry_type,
+        turn_id=turn_id,
         data=_dump(data),
     )
     db.add(row)
     touch_session(db, session_id)
     db.commit()
     return row
+
+
+def find_last_user_message(db: DbSession, session_id: str) -> Message | None:
+    """取最后一条用户消息（重新生成的锚点）。"""
+    row = db.execute(
+        select(Message)
+        .where(Message.session_id == session_id, Message.role == "user")
+        .order_by(Message.sequence.desc())
+        .limit(1)
+    ).scalar()
+    return row
+
+
+def rollback_turn(db: DbSession, session_id: str, turn_id: str, from_sequence: int) -> int:
+    """回滚一轮：删除该轮的 assistant 消息（级联删 parts）与该轮全部事实行。
+
+    from_sequence = 该轮用户消息的 sequence——只删 >= 它的 assistant 行；
+    用户消息保留（重新生成语义：保留请求、重跑回复）。
+    返回删除的 assistant 消息条数。
+    """
+    result = db.execute(
+        delete(Message).where(
+            Message.session_id == session_id,
+            Message.role == "assistant",
+            Message.sequence >= from_sequence,
+        )
+    )
+    # 该轮事实（turn/approval/compaction/context）
+    db.execute(
+        delete(SessionEntry).where(
+            SessionEntry.session_id == session_id, SessionEntry.turn_id == turn_id
+        )
+    )
+    db.commit()
+    return result.rowcount or 0
 
 
 def list_entries(db: DbSession, session_id: str, entry_type: str | None = None) -> list[SessionEntry]:
