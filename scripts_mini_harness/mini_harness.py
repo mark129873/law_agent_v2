@@ -112,10 +112,8 @@ MODEL = os.getenv("MODEL_ID", "")
 client = Anthropic(api_key=ANTHROPIC_API_KEY,
                    base_url=ANTHROPIC_BASE_URL)
 
-# 所有 LLM 调用统一关闭思考: 兼容端点(GLM/DeepSeek 等)可能默认开启,
-# 思考块拖慢响应且占用输出 token; 官方 API 该参数同样是合法的关闭方式
-THINKING = {"type": "disabled"}
 
+THINKING = {"type": "disabled"}
 MAX_TOKENS = 10000          # 每次模型调用的输出上限
 BASH_TIMEOUT = 120         # shell 命令超时秒数
 
