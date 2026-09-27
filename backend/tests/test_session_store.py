@@ -5,21 +5,10 @@
 
 import json
 
-import pytest
 from sqlalchemy import select
 
-from app import db
 from app.models import Part
 from app.sessions import replay, store
-
-
-@pytest.fixture()
-def store_db(tmp_data_dir):
-    """一个连到测试沙箱库的 ORM 会话；测试结束自动关闭。"""
-    db.init_db(tmp_data_dir)
-    s = db.new_session()
-    yield s
-    s.close()
 
 
 def _session(d, sid="s1"):

@@ -23,6 +23,7 @@ from app.agent.loop import TurnDeps, run_turn
 from app.config import settings, validate_llm_config
 from app.models import new_id
 from app.sessions import replay, store, turn_manager
+from app.sessions.approvals import InteractiveApprover
 from app.sessions.recorder import TurnRecorder
 
 logger = logging.getLogger(__name__)
@@ -134,15 +135,15 @@ async def start_turn(
     history = replay.load_history(turn_db, session_id)
     history.append({"role": "user", "content": body.text})
 
+    queue: asyncio.Queue = asyncio.Queue()
     deps = TurnDeps(
         client=client,
         recorder=recorder,
         system_prompt=_load_system_prompt(),
         history=history,
         stop_flag=stop_event.is_set,
+        approver=InteractiveApprover(turn_db, session_id, recorder, queue),
     )
-
-    queue: asyncio.Queue = asyncio.Queue()
 
     async def pump() -> None:
         """把循环事件泵进队列；收口后注销并关闭独立会话。"""
@@ -183,4 +184,21 @@ def stop_turn(session_id: str) -> dict:
     """请求停止当前 turn：循环在下一个检查点优雅收口（部分输出保留）。"""
     if not turn_manager.request_stop(session_id):
         raise HTTPException(status_code=404, detail="该会话没有进行中的 turn")
+    return {"ok": True}
+
+
+class ApprovalIn(BaseModel):
+    """POST /approval 请求体。"""
+
+    request_id: str
+    approved: bool
+
+
+@router.post("/{session_id}/approval")
+def submit_approval(session_id: str, body: ApprovalIn) -> dict:
+    """提交审批决定：唤醒正在等待的 turn（与连接无关，刷新后仍可提交）。"""
+    from app.sessions import approvals
+
+    if not approvals.resolve(body.request_id, body.approved):
+        raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
     return {"ok": True}

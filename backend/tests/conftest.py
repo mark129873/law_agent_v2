@@ -45,3 +45,14 @@ def client(tmp_data_dir: Path) -> TestClient:
     app = create_app()
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture()
+def store_db(tmp_data_dir: Path):
+    """连到测试沙箱库的 ORM 会话；测试结束自动关闭（防 Windows 文件锁）。"""
+    from app import db
+
+    db.init_db(tmp_data_dir)
+    session = db.new_session()
+    yield session
+    session.close()

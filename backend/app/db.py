@@ -33,8 +33,16 @@ def _enable_sqlite_pragmas(dbapi_connection, _record) -> None:
 
 
 def init_db(data_dir: Path) -> Engine:
-    """创建引擎、建表并初始化全局工厂。可重复调用（幂等）。"""
+    """创建引擎、建表并初始化全局工厂。幂等：已初始化时直接复用。
+
+    为什么必须幂等且复用：测试里多个夹具/用例会重复调用；如果每次都新建
+    引擎替换全局引用，旧引擎连接池里的连接会泄漏，Windows 上 app.db 一直
+    被占用，测试目录删不掉。
+    """
     global _engine, _session_factory
+
+    if _engine is not None:
+        return _engine
 
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "app.db"

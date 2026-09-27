@@ -59,9 +59,9 @@
       "id": "BE-006",
       "name": "交互审批",
       "description": "高危命中挂起(asyncio.Event)、SSE 推 approval_request、POST approval 唤醒、拒绝理由喂回模型、审批留痕 session_entry、active_ms 审批等待记账、状态机单测",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 47 passed：仲裁注册表取出式二次提交拒改/InteractiveApprover 全流程(请求入队→挂起→拒绝→唤醒→requested+denied 双留痕→resolved 事件)与批准路径/端点 404 语义/active_ms 剔除审批等待段/未决审批回放恢复(刷新可凭 request_id 提交)",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-007",
