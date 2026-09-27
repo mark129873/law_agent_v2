@@ -35,9 +35,9 @@
       "id": "BE-003",
       "name": "会话 CRUD+resume API",
       "description": "POST/GET /api/sessions(含 running 标志,draft 语义)、GET /api/sessions/{id}(全量回放)、DELETE(软删)、标题=首条消息截断30字、API 集成测试",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 16 passed：POST 只发 id 不落库(draft)/首条消息后列表可见且标题截断/详情全量回放结构正确/删除软删后 404 且重复删 404；含 turn_manager 最小注册表(running 标志)",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-004",

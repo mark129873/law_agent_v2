@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import db
+from app.api import sessions as sessions_api
 from app.config import settings
 from app.obs import setup_logging
 
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """构造 FastAPI 实例（独立成函数方便测试复用）。"""
     app = FastAPI(title="个人助手 harness", lifespan=lifespan)
+    app.include_router(sessions_api.router)
 
     @app.get("/api/health")
     def health() -> dict:
