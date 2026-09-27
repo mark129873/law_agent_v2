@@ -75,9 +75,9 @@
       "id": "BE-008",
       "name": "subtask/skills/todo",
       "description": "subtask 子助手(30轮独立循环、防递归、subtask_* SSE 事件与落盘)、load_skill(backend/skills/ 目录约定)、todo_write(任务板落盘+SSE)",
-      "status": "planned",
-      "evidence": "",
-      "testedAt": ""
+      "status": "passing",
+      "evidence": "uv run pytest 60 passed：todo 校验(上限/非法状态/in_progress≤1/JSON容错)+面板渲染+落盘与事件+非法输入不落盘/load_skill 读取·不存在·目录穿越防护/subtask 嵌套循环(子助手真实写文件、subtask_started/delta/completed 直推队列、结果回父级、单行卡片收口)",
+      "testedAt": "2026-09-27"
     },
     {
       "id": "BE-009",

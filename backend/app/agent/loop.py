@@ -60,6 +60,7 @@ class TurnDeps:
     stop_flag: Callable[[], bool] = field(default_factory=lambda: (lambda: False))
     settings: object = None  # 压缩预算等（None = 禁用压缩）
     last_input_tokens: int | None = None  # 上一轮真实 input_tokens（无则估算）
+    queue: object | None = None  # SSE 事件队列（subtask/todo_write 直推事件用）
 
 
 def _preview(text: str) -> str:
@@ -199,10 +200,10 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 if deps.stop_flag():
                     stop_requested = True
                     break
-                result = await _execute_one(deps, message_id, tool_use, part_ids[tool_use["id"]])
-                for ev in result["events"]:
-                    yield ev
-                tool_results.append(result["tool_result"])
+                result_box: dict = {}
+                async for event in _execute_one(deps, message_id, tool_use, part_ids[tool_use["id"]], result_box):
+                    yield event
+                tool_results.append(result_box["tool_result"])
 
             if stop_requested:
                 break
@@ -229,10 +230,14 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
     }
 
 
-async def _execute_one(deps: TurnDeps, message_id: str, tool_use: dict, part_id: str) -> dict:
-    """单个工具调用：权限分档 → 审批 → 执行 → 落盘 + 事件。
+async def _execute_one(
+    deps: TurnDeps, message_id: str, tool_use: dict, part_id: str, result_box: dict
+) -> AsyncIterator[dict]:
+    """单个工具调用：权限分档 → 审批 → 执行 → 落盘 + 事件（异步生成器）。
 
-    返回 {"events": [...], "tool_result": {...}}。
+    为什么是生成器：subtask/todo_write 需要在执行过程中实时吐事件
+    （子助手流式输出、任务板更新），不能等执行完一次性返回。
+    结果通过 result_box["tool_result"] 带出（生成器无法用 return 值传给调用方）。
     约定：denied（策略拒绝/用户拒绝）不执行、不发 tool_started，只发结果卡。
     """
     name = tool_use["name"]
@@ -266,7 +271,24 @@ async def _execute_one(deps: TurnDeps, message_id: str, tool_use: dict, part_id:
                 message_id, part_id,
                 {"tool_call_id": call_id, "name": name, "input": tool_input, "status": "running"},
             )
-            output = await asyncio.to_thread(execute_tool, name, tool_input)
+            if name == "subtask":
+                # 特殊工具：嵌套循环，事件实时吐（最后由哨兵带出输出文本）
+                from app.agent.subtask import run_subtask_events
+
+                async for event in run_subtask_events(deps, message_id, tool_input):
+                    if "_subtask_output" in event:
+                        output = event["_subtask_output"]
+                    else:
+                        yield event
+            elif name == "todo_write":
+                # 特殊工具：落 todo part + todo_updated 事件
+                from app.agent.todo import handle_todo_write
+
+                output, extra_events = await handle_todo_write(deps, message_id, tool_input)
+                for event in extra_events:
+                    yield event
+            else:
+                output = await asyncio.to_thread(execute_tool, name, tool_input)
             if _is_error_output(output):
                 status = "failed"
 
@@ -283,19 +305,13 @@ async def _execute_one(deps: TurnDeps, message_id: str, tool_use: dict, part_id:
         {"name": name, "tool_call_id": call_id, "status": status, "duration_ms": duration_ms},
     )
 
-    events: list[dict] = []
     if status in ("completed", "failed"):
-        events.append(
-            {"type": "tool_started", "tool_call_id": call_id, "name": name, "input": tool_input}
-        )
-    events.append(
-        {
-            "type": "tool_completed",
-            "tool_call_id": call_id,
-            "name": name,
-            "status": status,
-            "output_preview": _preview(output or ""),
-        }
-    )
-    tool_result = {"type": "tool_result", "tool_use_id": call_id, "content": output or ""}
-    return {"events": events, "tool_result": tool_result}
+        yield {"type": "tool_started", "tool_call_id": call_id, "name": name, "input": tool_input}
+    yield {
+        "type": "tool_completed",
+        "tool_call_id": call_id,
+        "name": name,
+        "status": status,
+        "output_preview": _preview(output or ""),
+    }
+    result_box["tool_result"] = {"type": "tool_result", "tool_use_id": call_id, "content": output or ""}

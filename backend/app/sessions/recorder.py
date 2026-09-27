@@ -114,12 +114,18 @@ class TurnRecorder:
         )
 
     def write_subtask_part(self, message_id: str, data: dict) -> str:
-        """subtask 卡片落盘（BE-8 使用，先备好通道）。"""
+        """subtask 卡片落盘（BE-8 使用）：先写 running 态。"""
         part_id = new_id()
         store.upsert_part(
             self.db, self.session_id, message_id, part_id, "subtask", data, self.turn_id
         )
         return part_id
+
+    def update_subtask_part(self, part_id: str, message_id: str, data: dict) -> None:
+        """subtask 收口：同一 part 行更新为最终状态与完整输出。"""
+        store.upsert_part(
+            self.db, self.session_id, message_id, part_id, "subtask", data, self.turn_id
+        )
 
     def write_todo_part(self, message_id: str, items: list) -> str:
         """任务板快照落盘（BE-8 使用）。"""

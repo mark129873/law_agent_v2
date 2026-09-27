@@ -147,6 +147,13 @@ def tool_delete_file(path: str) -> str:
         return f"Error: 删除失败：{exc}"
 
 
+def tool_load_skill(name: str) -> str:
+    """读取技能全文（实现见 skills.py；这里挂进分发表）。"""
+    from app.agent.skills import tool_load_skill as _impl
+
+    return _impl(name)
+
+
 # ---------- 双表注册 ----------
 
 TOOL_HANDLERS: dict[str, Callable[..., str]] = {
@@ -156,6 +163,7 @@ TOOL_HANDLERS: dict[str, Callable[..., str]] = {
     "edit_file": tool_edit_file,
     "glob": tool_glob,
     "delete_file": tool_delete_file,
+    "load_skill": tool_load_skill,
 }
 
 
@@ -197,6 +205,32 @@ TOOLS: list[dict] = [
     _schema(
         "delete_file", "删除工作区文件（移入 .rubbish/ 可找回）。",
         {"path": {"type": "string"}}, ["path"],
+    ),
+    _schema(
+        "todo_write", "全量更新任务板（≤20 条；进行中最多 1 条）。",
+        {
+            "items": {
+                "type": "array",
+                "description": "任务数组，每项 {content: str, status: pending|in_progress|completed}",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                    },
+                    "required": ["content", "status"],
+                },
+            }
+        },
+        ["items"],
+    ),
+    _schema(
+        "load_skill", "加载指定技能的完整说明文档（按需加载，先看目录再取）。",
+        {"name": {"type": "string", "description": "技能目录名"}}, ["name"],
+    ),
+    _schema(
+        "subtask", "派出子助手独立完成一个目标（有自己的工具循环），返回其最终汇报。",
+        {"goal": {"type": "string", "description": "子助手要完成的单一目标，要写得具体"}}, ["goal"],
     ),
 ]
 
