@@ -4,14 +4,14 @@
 
 1. 首次准备：`cd backend && cp .env.example .env` 并填入 `ANTHROPIC_API_KEY` 等
 2. 安装依赖：`cd backend && uv sync`
-3. 启动验证：`cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000`，然后访问 `http://127.0.0.1:8000/api/health` 应返回正常；验证完成记得关闭
+3. 启动验证：`cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8100`，然后访问 `http://127.0.0.1:8100/api/health` 应返回正常；验证完成记得关闭（默认端口 8100：本机 8000 常被其他服务占用）
 4. 测试：`cd backend && uv run pytest -q`（测试使用 `tests/.tmp-data/`，跑完自动清理）
 
 ## 前端（frontend/）
 
 1. 安装依赖：`cd frontend && npm install`
 2. 构建验证：`cd frontend && npm run build`
-3. 启动：`cd frontend && npm run dev`（http://localhost:5173，/api 代理到后端 8000；联调需先启动后端）
+3. 启动：`cd frontend && npm run dev`（http://localhost:5173，/api 代理到后端 8100；联调需先启动后端）
 
 ## 注意
 

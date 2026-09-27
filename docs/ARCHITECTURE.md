@@ -13,7 +13,7 @@
    │  POST /api/sessions/{id}/turn    POST .../approval   POST .../stop
    │  ┌──────────── SSE 事件流 ────────────┐
    ▼           ▼                   ▼
-FastAPI (uvicorn, 127.0.0.1:8000)
+FastAPI (uvicorn, 127.0.0.1:8100)
    │
    ├─ sessions/store.py         # SQLite 四表：会话内容的唯一事实源（ZCode 同款）
    ├─ sessions/replay.py        # 从四表读出并拼装成回放结构（全量）
@@ -121,7 +121,7 @@ frontend/src/
 
 - **TurnGroup 状态机**：running 块头"工作中 {duration}"每秒 tick（仅 running 态允许用当前时钟）；completed"已工作 {duration}"取落盘 active_ms 固定值；stopped"已停止"强制展开；完成瞬间自动收起；历史回放同形态。
 - 视觉：浅色单主题——zinc-50 底 + 白面板 + zinc-200 发丝线 + zinc-900 正文；主按钮近黑 + 单一强调色；代码/数字/耗时用等宽字体；无渐变、无发光、无 emoji；Phosphor 图标；CSS transition 轻动效并尊重 prefers-reduced-motion；空/加载/错误态齐全。
-- Vite dev 代理 `/api` → 8000。
+- Vite dev 代理 `/api` → 8100。
 
 ## 8. 并发与失败语义
 

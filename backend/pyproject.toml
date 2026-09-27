@@ -23,3 +23,9 @@ dev = [
     # FastAPI TestClient 依赖 httpx
     "httpx>=0.27",
 ]
+
+[tool.pytest.ini_options]
+# 测试目录固定在 tests/，从 backend/ 目录运行 pytest
+testpaths = ["tests"]
+# 让 tests 能 import app 包（backend 源码目录）
+pythonpath = ["."]
