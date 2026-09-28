@@ -60,8 +60,8 @@
       "name": "交互审批",
       "description": "高危命中挂起(asyncio.Event)、SSE 推 approval_request、POST approval 唤醒、拒绝理由喂回模型、审批留痕 session_entry、active_ms 审批等待记账、状态机单测",
       "status": "passing",
-      "evidence": "uv run pytest 47 passed：仲裁注册表取出式二次提交拒改/InteractiveApprover 全流程(请求入队→挂起→拒绝→唤醒→requested+denied 双留痕→resolved 事件)与批准路径/端点 404 语义/active_ms 剔除审批等待段/未决审批回放恢复(刷新可凭 request_id 提交)",
-      "testedAt": "2026-09-27"
+      "evidence": "pytest 47 passed(状态机/双留痕/active_ms剔除审批段/回放恢复)；S2浏览器实测：实时弹窗→批准→工具真实执行→已批准卡实时翻转，拒绝理由喂回模型未重试；active 5.6s vs 挂起344s 证明等待排除。修复 _turn_sse_response 双队列错接(审批事件曾丢失)。",
+      "testedAt": "2026-09-28"
     },
     {
       "id": "BE-007",
@@ -76,8 +76,8 @@
       "name": "subtask/skills/todo",
       "description": "subtask 子助手(30轮独立循环、防递归、subtask_* SSE 事件与落盘)、load_skill(backend/skills/ 目录约定)、todo_write(任务板落盘+SSE)",
       "status": "passing",
-      "evidence": "uv run pytest 60 passed：todo 校验(上限/非法状态/in_progress≤1/JSON容错)+面板渲染+落盘与事件+非法输入不落盘/load_skill 读取·不存在·目录穿越防护/subtask 嵌套循环(子助手真实写文件、subtask_started/delta/completed 直推队列、结果回父级、单行卡片收口)",
-      "testedAt": "2026-09-27"
+      "evidence": "pytest 60 passed(todo 校验/面板渲染/load_skill 防护/嵌套循环直推事件)；S2浏览器实测：运行中卡片'执行中'+右侧面板实时累积输出(sleep30 任务双截图)，完成后结果回父轮；修复 subtask_completed 改为原地变更保面板引用。",
+      "testedAt": "2026-09-28"
     },
     {
       "id": "BE-009",
@@ -124,7 +124,7 @@
       "name": "审批弹窗+token徽标+错误重试",
       "description": "ApprovalModal(SSE 事件驱动+刷新恢复)、审批留痕卡、TokenBadge(会话头部用量进度)、ErrorCard(内联+重试)、停止后保留部分输出(已停止标记)、浏览器手测",
       "status": "passing",
-      "evidence": "浏览器实测：审批弹窗(实时 approval_request 与刷新回放恢复双源)、审批卡片留痕、TokenBadge(119→170 tok)、错误卡片+重试(接线 regenerate)、停止后部分输出保留",
+      "evidence": "S2浏览器复测：审批弹窗双源均可用(实时 approval_request 在修复双队列后验证+刷新回放恢复)、留痕卡实时翻转、TokenBadge(119→170 tok)、错误卡片重试、停止后部分输出保留",
       "testedAt": "2026-09-28"
     },
     {

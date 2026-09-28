@@ -3,33 +3,39 @@
 ## 当前已验证
 
 - 现在明确可用的部分：
-  - 后端 10 功能全部 passing（BE-1~BE-10，见 docs/feature_list.json）：会话四表存储、CRUD+resume、agent 工具循环（6 基础工具+todo/skill/subtask）、SSE 流式、交互审批、ZCode compact+microcompact、重新生成、logging+Langfuse（默认关）
-  - 前端 5 功能全部 passing（FE-1~FE-5）：三栏布局、会话列表（呼吸点/删除确认）、TurnGroup 工作块（ZCode 状态机+codex 耗时）、流式聊天+Markdown、审批弹窗+重试、subtask 面板+聚合组
-  - E2E 浏览器联调通过：新建→对话→工具写文件→刷新回看→错误重试→resume 续聊→删除
-- 这轮实际跑过的验证：`cd backend && uv run pytest -q`（70 passed）；`cd frontend && npm run build`；uvicorn 真实启动 + 浏览器全流程手动操作（真实 LLM 一次短对话）
+  - 后端 10 功能 + 前端 5 功能全部 passing（docs/feature_list.json），其中 BE-006（审批）、BE-008（subtask）、FE-004（审批弹窗）已补上浏览器实测证据（Session 002）
+  - 审批路径已全链路实时可用：高危命令→弹窗实时出现→批准→工具真实执行→"已批准"卡实时翻转→turn 收口，全程无需刷新；拒绝路径理由喂回模型、模型不重试
+  - subtask 路径：运行中 SubAgent 卡"执行中"+右侧面板实时累积输出，完成后结果回父轮
+  - Composer Enter 发送对真实逐字输入正常（此前"Enter 失效"为自动化测试 fill+Enter 同帧竞态假象）
+- 这轮实际跑过的验证：黑盒 GUI 浏览器实测（批准/拒绝/subtask/Enter，12 张截图在 tmp/gui-test-screenshots/）；修复后 `cd backend && uv run pytest -q`（70 passed）；`cd frontend && npm run build` 通过；uvicorn 真实启动 + /api/health
 
 ## 本轮改动
 
-- 新增了哪些代码或行为：backend/app 全部（config/db/models/obs/main + api/sessions + agent/{loop,llm,tools,tool_exec→tools,permissions,hooks,compact,subtask,todo,skills} + sessions/{store,replay,recorder,turn_manager,approvals}）；frontend/src 全部；docs 三份文档与 feature_list 全量定稿
-- 基础设施或 harness 发生了哪些变化：backend 用 uv 独立工程（pyproject+uv.lock）；SQLite WAL 四表；数据目录收敛为 data/{app.db,workspace,logs}；默认端口 8100（8000 被本机 Godot MCP 占用）
+- 修复了哪些缺陷：
+  - **Bug#1（P1）**：backend/app/api/sessions.py `_turn_sse_response` 原来另建新队列覆盖 deps.queue，而 InteractiveApprover 持旧队列直推——审批事件全部丢失、实时弹窗永不出现（只靠刷新恢复救回）。修复：复用路由层创建的同一队列
+  - **Bug#3（P3）**：frontend useSessionStream 的 subtask_completed 用 map 替换对象，右栏面板持有的旧引用状态停留"执行中"；改为原地变更（与 subtask_delta 的 output+= 同风格）
+- 基础设施变化：.gitignore 增加 /tmp/（AGENTS.md 约定临时目录不入库，此前未覆盖）
 
 ## 仍损坏或未验证
 
 - 当前blocker：无
 - 已知缺陷和风险：
-  - schema 演进无版本化迁移（本次加列靠清 data/ 解决；再改表结构必须先引入迁移）
+  - Bug#3 的"执行中→已完成"翻转瞬间未直接观测（模型过快，机制等价已验证：面板文本实时增长走同一引用变更路径）
+  - schema 演进无版本化迁移（再改 models.py 必须先引入迁移）
   - subtask 子循环的 token 未计入 Langfuse/会话统计
   - 历史消息全量加载，超长会话可能卡（分页/虚拟化留 v2）
-  - failed 轮的块头显示"已停止"（与产品表一致但语义可再分）
-- 未验证路径：交互审批 UI 仅后端状态机验证过，浏览器里未实测完整审批往返；subtask 未在浏览器实测
-- 下一轮会话需要注意的风险：改 models.py 后必须处理旧 data/app.db（删库或迁移）；测试后确认 tests/.tmp-data 已清理（Windows 文件锁）
+  - failed 轮回放块头显示"已 stopped"（语义可再分）
+  - 前端主 JS 529kB 超 Vite 警告阈值（code-split 留打磨）
+  - 应用无路由、刷新后回首页不恢复上次会话（UX 决策，留真实使用反馈）
+- 未验证路径：无（上轮遗留的审批/subtask 浏览器实测已在本轮补齐）
+- 下一轮会话需要注意的风险：改 models.py 后必须处理旧 data/app.db；测试后确认 tests/.tmp-data 已清理（Windows 文件锁）
 
 ## 下一步最佳动作
 
-- 最高优先级未完成功能：真实使用打磨——审批与 subtask 的浏览器实测补验
-- 为什么它是下一步：这两条路径已有后端测试覆盖但缺 UI 实测，是仅剩的未验证路径
-- 什么结果才算 passing：浏览器里完成一次"高危命令→弹窗→批准→执行"与一次"subtask→右侧面板实时输出"
-- 这一步中哪些东西不要动：存储层契约（四表/回放结构）、SSE 事件类型、工作块状态机
+- 最高优先级未完成功能：真实使用打磨——工具卡 autoOpen、subtask 子循环 token 计入、长会话分页
+- 为什么它是下一步：15 项功能全部 passing 且无未验证路径，进入打磨期
+- 什么结果才算 passing：按 feature_list 对应项补充证据（token 计入需单测+实测数值一致；分页需大数据量会话实测）
+- 这一步中哪些东西不要动：存储层契约（四表/回放结构）、SSE 事件类型、工作块状态机、_turn_sse_response 的单队列约定（审批事件依赖它）
 
 ## 命令
 

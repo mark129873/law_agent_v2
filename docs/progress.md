@@ -38,6 +38,27 @@
 - 下一步最佳动作：真实使用中打磨（工具卡 autoOpen、subtask 子循环 token 计入、长会话分页）
 
 ### Session 002
+- 日期：2026-09-28
+- 本轮目标：补验两条未验证路径——浏览器实测交互审批完整往返（批准+拒绝）与 subtask 右侧面板实时输出（上轮验证结论：15 项功能 passing、启动路径健康，仅这两条缺 UI 实测）
+- 实测结论（黑盒 GUI 测试，截图证据在 tmp/gui-test-screenshots/）：
+  - 审批批准路径：后端正确挂起（pending_approval + requested 留痕），刷新恢复弹窗→批准→工具真实执行（note.txt 被删）→turn success，active_ms=5.6s 证明审批等待被正确排除（工具挂起总耗时 344s）
+  - 审批拒绝路径：拒绝→denied 留痕→理由喂回模型，模型明确复述"被用户拒绝"未重试并给替代方案
+  - subtask 路径：运行中 SubAgent 卡"执行中"+右侧面板实时累积输出（sleep 30 任务抓到运行态双截图），完成后结果回到父轮
+  - 发现 3 个 bug：①P1 审批弹窗实时路径失效（approval_request SSE 到达时弹窗不出现，用户无感知，只能靠刷新恢复救回）；②P1 Composer Enter 不发送（3 次复现，必须点发送按钮）；③P3 面板状态标签完成后仍显示"执行中"（重开才变"已完成"）
+- 运行过的验证：黑盒 GUI 测试（IAB 浏览器 + 真实 LLM，截图证据 tmp/gui-test-screenshots/ 共 12 张）；修复后回归 `uv run pytest -q`（70 passed）；`npm run build` 通过
+- 修复与回归：
+  - Bug#1（P1，已修复+回归）：`api/sessions.py::_turn_sse_response` 另建新队列覆盖 deps.queue，而 InteractiveApprover 持旧队列引用直推——approval_request/approval_resolved 写进无人消费的队列丢失，实时弹窗永不出现。修复为复用同一队列；回归实测弹窗"工作中 1s"即出现、批准后"已批准"卡实时翻转、全程无需刷新
+  - Bug#3（P3，已修复）：`useSessionStream.subtask_completed` 用 map 替换对象致右栏面板持有旧引用、状态停留"执行中"；改为原地变更（与 subtask_delta 的 output+= 同风格）。机制与已实测的面板文本实时增长相同；"执行中→已完成"翻转瞬间因模型过快未直接观测到
+  - Bug#2（撤销）：Enter 不发送为测试假象——fill()+Enter 同瞬间竞态 React 状态批处理；逐字输入（delay 80ms）+Enter 实测正常发送。非产品 bug，无需修复
+- 已记录证据：feature_list.json BE-006/BE-008/FE-004 证据更新并附浏览器实测；截图 12 张在 tmp/gui-test-screenshots/（不入库）
+- 提交记录：见 git log（fix 双队列+面板引用、docs Session 002 收尾）
+- 更新过的文件或工件：backend/app/api/sessions.py、frontend/src/hooks/useSessionStream.ts、docs/progress.md、docs/feature_list.json、docs/session-handoff.md、.gitignore(+tmp/)
+- 已知风险或未解决问题：
+  - Bug#3 的状态翻转瞬间未直接观测（成本考虑不再烧 LLM 轮次，机制等价已验证）
+  - failed 轮回放块头显示"已停止"（上轮已知，未处理）
+  - 前端主 JS 529kB 超 Vite 警告阈值（code-split 留打磨）
+  - 应用无路由/不恢复上次会话（刷新回首页），属 UX 决策非缺陷，留真实使用反馈
+- 下一步最佳动作：真实使用打磨——工具卡 autoOpen、subtask 子循环 token 计入、长会话分页（按 handoff 优先级）
 
 
 

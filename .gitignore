@@ -28,5 +28,8 @@ backend/tests/.tmp-data/
 frontend/node_modules/
 frontend/dist/
 
+# 临时文件目录（AGENTS.md 约定：不入库，可随时清空）
+/tmp/
+
 # ZCode 会话产物
 .zcode/
