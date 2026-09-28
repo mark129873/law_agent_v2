@@ -204,8 +204,10 @@ def _turn_sse_response(
     session_id: str, recorder, stop_event, deps: TurnDeps, turn_db
 ) -> StreamingResponse:
     """turn 的公共 SSE 出口：后台泵任务 + 队列 + 心跳（start_turn/regenerate 共用）。"""
-    queue: asyncio.Queue = asyncio.Queue()
-    deps.queue = queue
+    # 复用路由层创建的那个队列：InteractiveApprover 持有同一引用直推审批事件，
+    # 若在这里另建新队列，审批事件会被写进无人消费的旧队列而丢失（实测踩过的坑）
+    queue = deps.queue
+    assert queue is not None, "TurnDeps.queue 必须由路由层预先创建"
 
     async def pump() -> None:
         """把循环事件泵进队列；收口后注销并关闭独立会话。"""

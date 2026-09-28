@@ -142,11 +142,12 @@ export function useSessionStream(sessionId: string | null) {
 
         case 'subtask_completed':
           if (cur) {
-            cur.work_items = cur.work_items.map((x) =>
-              x.kind === 'subtask' && x.id === event.subtask_id
-                ? { ...x, status: event.status }
-                : x,
+            // 原地改状态而非 map 替换对象：右栏面板持有同一 work item 引用，
+            // 替换会让面板里的状态停留在"执行中"（引用与数组脱钩）
+            const sub = cur.work_items.find(
+              (x) => x.kind === 'subtask' && x.id === event.subtask_id,
             )
+            if (sub && sub.kind === 'subtask') sub.status = event.status
             setTurn({ ...cur })
           }
           break
