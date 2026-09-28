@@ -60,5 +60,21 @@
   - 应用无路由/不恢复上次会话（刷新回首页），属 UX 决策非缺陷，留真实使用反馈
 - 下一步最佳动作：真实使用打磨——工具卡 autoOpen、subtask 子循环 token 计入、长会话分页（按 handoff 优先级）
 
+### Session 003
+- 日期：2026-09-28
+- 本轮目标：落地产品决策——**不做 schema 迁移（现在和将来都不做）**，生产语义即"改表/发版 = 清库重建"；测试（pytest 与浏览器手测）一律从空库开始
+- 技术决策：用户拍板"实际生产环境就是每一次新建表重来的"；不加启动防呆检查、不写清库脚本，纯文档约定
+- 已完成：
+  - AGENTS.md 工作规则新增数据库演进约定条款
+  - db.py init_db 注释移除"后续再引入迁移"表述，指向新决策
+  - ARCHITECTURE.md §2.1、RELIABILITY.md 测试干净环境管理节补约定（手测/E2E 前先清空 backend/data/）
+  - session-handoff.md 删除"必须先引入迁移"风险项；feature_list.json BE-001 措辞"四表迁移"→"四表建库"
+- 运行过的验证：清空 backend/data/ 后真实启动——目录自动重建（app.db/workspace/logs）、/api/health 返回 ok、会话列表为空数组；`uv run pytest -q` 70 passed；tests/.tmp-data 无残留
+- 已记录证据：见本条目验证行与 git 提交
+- 提交记录：docs: 落地"不做schema迁移"产品决策
+- 更新过的文件或工件：AGENTS.md、backend/app/db.py（仅注释）、docs/{ARCHITECTURE,RELIABILITY,progress,session-handoff,feature_list}
+- 已知风险或未解决问题：无新增（既有风险清单见 session-handoff.md）
+- 下一步最佳动作：真实使用打磨（同 Session 002 交接）
+
 
 

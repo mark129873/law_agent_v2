@@ -55,8 +55,8 @@ def init_db(data_dir: Path) -> Engine:
     )
     event.listen(engine, "connect", _enable_sqlite_pragmas)
 
-    # 建表（幂等：已存在的表跳过）。v1 表结构由 models.py 声明，
-    # 后续结构演进再引入版本化迁移（ZCode migrations 的思路）。
+    # 建表（幂等：已存在的表跳过）。表结构由 models.py 声明；
+    # 结构演进约定（产品决策 2026-09-28）：不做迁移，删除 data/ 重启即全新建表。
     Base.metadata.create_all(engine)
 
     _engine = engine

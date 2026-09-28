@@ -21,14 +21,13 @@
 - 当前blocker：无
 - 已知缺陷和风险：
   - Bug#3 的"执行中→已完成"翻转瞬间未直接观测（模型过快，机制等价已验证：面板文本实时增长走同一引用变更路径）
-  - schema 演进无版本化迁移（再改 models.py 必须先引入迁移）
   - subtask 子循环的 token 未计入 Langfuse/会话统计
   - 历史消息全量加载，超长会话可能卡（分页/虚拟化留 v2）
   - failed 轮回放块头显示"已 stopped"（语义可再分）
   - 前端主 JS 529kB 超 Vite 警告阈值（code-split 留打磨）
   - 应用无路由、刷新后回首页不恢复上次会话（UX 决策，留真实使用反馈）
-- 未验证路径：无（上轮遗留的审批/subtask 浏览器实测已在本轮补齐）
-- 下一轮会话需要注意的风险：改 models.py 后必须处理旧 data/app.db；测试后确认 tests/.tmp-data 已清理（Windows 文件锁）
+- 未验证路径：无（上轮遗留的审批/subtask 浏览器实测已在 Session 002 补齐）
+- 下一轮会话需要注意的风险：改 models.py 表结构后删除 backend/data/ 重启重建（产品决策：不做 schema 迁移，生产语义即清库重建）；测试后确认 tests/.tmp-data 已清理（Windows 文件锁）
 
 ## 下一步最佳动作
 

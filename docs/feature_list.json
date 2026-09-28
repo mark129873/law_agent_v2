@@ -18,7 +18,7 @@
     {
       "id": "BE-001",
       "name": "后端骨架+配置+DB",
-      "description": "backend 工程（uv + FastAPI + SQLAlchemy）：config(.env 全量可配)、SQLite 四表迁移(WAL)、/api/health、obs.py 基础 logging(控制台+滚动文件)、首次启动全自动初始化目录",
+      "description": "backend 工程（uv + FastAPI + SQLAlchemy）：config(.env 全量可配)、SQLite 四表建库(WAL)、/api/health、obs.py 基础 logging(控制台+滚动文件)、首次启动全自动初始化目录",
       "status": "passing",
       "evidence": "uv run pytest 3 passed（health/四表建库/目录与日志初始化，tests/.tmp-data 自动清理）；uvicorn 真实启动 127.0.0.1:8100，curl /api/health 返回 {status:ok} 后关闭。默认端口改 8100（8000 被本机 Godot MCP 占用）",
       "testedAt": "2026-09-27"

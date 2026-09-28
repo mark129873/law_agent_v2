@@ -26,7 +26,7 @@ FastAPI (uvicorn, 127.0.0.1:8100)
 ## 2. 会话存储（ZCode 式：单库 SQLite 四表为唯一事实源）
 
 ### 2.1 数据库
-- 库文件 `backend/data/app.db`，SQLite WAL + busy_timeout + foreign_keys，所有会话共库。
+- 库文件 `backend/data/app.db`，SQLite WAL + busy_timeout + foreign_keys，所有会话共库。表结构演进约定（产品决策 2026-09-28）：不做 schema 迁移，改 models.py 后删除 data/ 重启即全新建表。
 - 四张实体表（照搬 ZCode `session-store` 形态，`data` 列存 JSON 字符串）：
 
 | 表 | 列 |
