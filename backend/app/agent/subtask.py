@@ -4,7 +4,9 @@
 - 全新消息历史跑独立循环（最多 30 轮），只有 6 个基础工具（无 subtask 防递归）；
 - 最终文本作为工具结果返回父级；
 - Web 版差异：子循环的文本增量实时以 subtask_delta 事件推给前端右侧面板；
-  落盘只保留"目标+状态+最终输出"一张 subtask 卡（子循环内部步骤不落库）。
+  落盘只保留"目标+状态+最终输出"一张 subtask 卡（子循环内部步骤不落库）；
+- token 口径：子循环每次调用的 usage 与主循环同口径处理——累计进会话
+  tokens_used、发 token_count 事件、上报 Langfuse（metadata 带 subtask_id）。
 
 权限差异：子助手中 deny-list 仍然生效（返回 Error 字符串），高危操作
 自动放行（交互审批只存在于主循环——子助手是父任务委派的执行细节）。
@@ -15,6 +17,7 @@ import logging
 
 from app.agent import permissions
 from app.agent.tools import TOOL_HANDLERS, TOOLS, execute_tool
+from app.obs import record_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +62,34 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                 break
             text_acc = ""
             tool_uses: list[dict] = []
-            async for event in deps.client.stream(
-                system=SUBTASK_SYSTEM_PROMPT, messages=child_history, tools=SUBTASK_TOOLS
-            ):
-                kind = event.get("type")
-                if kind == "text_delta":
-                    text_acc += event.get("text", "")
-                elif kind == "tool_use":
-                    tool_uses.append(event)
+            step_usage: dict = {"input_tokens": 0, "output_tokens": 0}
+            child_snapshot = [dict(m) for m in child_history]  # Langfuse 上报用的调用时快照
+            try:
+                async for event in deps.client.stream(
+                    system=SUBTASK_SYSTEM_PROMPT, messages=child_history, tools=SUBTASK_TOOLS
+                ):
+                    kind = event.get("type")
+                    if kind == "text_delta":
+                        text_acc += event.get("text", "")
+                    elif kind == "tool_use":
+                        tool_uses.append(event)
+                    elif kind == "usage":
+                        # 子循环 token 与主循环同口径：计入会话统计（add_tokens），
+                        # 并发 token_count 事件给前端（经生成器逐层转发出 SSE）
+                        step_usage = {
+                            "input_tokens": event.get("input_tokens", 0),
+                            "output_tokens": event.get("output_tokens", 0),
+                        }
+                        deps.recorder.add_tokens(step_usage["output_tokens"])
+                        yield {"type": "token_count", **step_usage}
+            finally:
+                # Langfuse：子循环调用也上报交互细节，metadata 带 subtask_id 区分
+                record_llm_call(
+                    deps.recorder.session_id, deps.recorder.turn_id,
+                    getattr(deps.client, "model", "unknown"),
+                    SUBTASK_SYSTEM_PROMPT, child_snapshot, text_acc, step_usage,
+                    subtask_id=subtask_id,
+                )
 
             if text_acc:
                 output_acc.append(text_acc)

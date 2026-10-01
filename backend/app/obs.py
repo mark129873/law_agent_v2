@@ -108,21 +108,26 @@ def record_llm_call(
     messages: list,
     output_text: str,
     usage: dict,
+    subtask_id: str | None = None,
 ) -> None:
     """上报一次 LLM 调用（trace=session，generation 带 turn 元数据）。
 
     双系统不重复的边界：这里记 prompt/messages/completion 全文，
     logging 里只记"发生了一次调用"的工程事实。
+    subtask_id：subtask 子循环的调用传入，用于在观测里与主循环调用区分。
     任何失败都吞掉并记 WARNING——观测永远不能挡住对话主流程。
     """
     if _langfuse_client is None:
         return
     try:
         trace = _langfuse_client.trace(id=session_id, name="session", session_id=session_id)
+        metadata: dict = {"turn_id": turn_id}
+        if subtask_id:
+            metadata["subtask_id"] = subtask_id
         trace.generation(
             name="llm-call",
             model=model,
-            metadata={"turn_id": turn_id},
+            metadata=metadata,
             input={"system": system, "messages": messages},
             output=output_text,
             usage={

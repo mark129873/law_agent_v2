@@ -63,7 +63,7 @@ backend/data/
 - **错误不打断循环**：工具异常转为 "Error: ..." 字符串作为 tool_result 喂回模型。
 - **反应式压缩重试**：API 报 prompt_too_long 时压缩后重试一次。
 - **hooks 四事件点**：UserPromptSubmit / PreToolUse / PostToolUse / Stop。
-- **工具双表**：`TOOLS`（给模型的 schema 列表）+ `TOOL_HANDLERS`（名字→函数）。基础 6 工具：bash、read_file、write_file、edit_file（old_text 须恰好出现一次）、glob、delete_file；扩展：todo_write、load_skill、subtask（30 轮独立循环、无 subtask 防递归）。
+- **工具双表**：`TOOLS`（给模型的 schema 列表）+ `TOOL_HANDLERS`（名字→函数）。基础 6 工具：bash、read_file、write_file、edit_file（old_text 须恰好出现一次）、glob、delete_file；扩展：todo_write、load_skill、subtask（30 轮独立循环、无 subtask 防递归；子循环的 usage 事件与主循环同口径处理——计入会话 tokens_used、发 token_count 事件、上报 Langfuse 并带 subtask_id）。
 - **safe_path 沙箱**：全部文件工具 resolve 后必须位于 `data/workspace/` 内，bash 在该目录启动。
 - **权限闸门**（`agent/permissions.py`，mini_harness 同款硬编码）：① deny-list 硬拒（sudo、rm -rf / 等）→ 错误回喂；② 高危操作（shell 删除、chmod、管道执行、越界写）→ 挂起等待用户审批；③ 其余自动执行。
 - **Turn 管理**（`sessions/turn_manager.py`）：session_id → 进行中任务注册表；stop 置取消标志，循环在检查点优雅收尾（已生成内容以 stopped 状态落盘）；审批等待用 `asyncio.Event` 挂起并起止记账（供 active_ms）；同会话并发 turn 返回 409。
@@ -96,7 +96,7 @@ SSE 事件（`event: <类型>` + `data: <JSON>`，15s 心跳）：
 - 全部参数入 `.env`，`backend/.env.example` 逐项中文注释。
 - **观测双系统、内容不重复**：
   - `logging`（`app/obs.py`：控制台 + 滚动文件 data/logs/）：记**工程事件**——turn 生命周期、工具调用与耗时、审批请求与结果、压缩发生、错误堆栈；只记事件与 id，不记 prompt/回复正文。
-  - Langfuse（默认关闭）：记 **LLM 交互细节**——system prompt、messages、completion、token 用量，按 session_id(trace)/turn_id(span) 组织。
+  - Langfuse（默认关闭）：记 **LLM 交互细节**——system prompt、messages、completion、token 用量，按 session_id(trace)/turn_id(span) 组织；subtask 子循环的调用同样上报，metadata 带 subtask_id 区分。
 
 ## 7. 前端架构（React 18 + TS + Vite + Tailwind v4）
 

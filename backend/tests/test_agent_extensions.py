@@ -16,6 +16,8 @@ from app.sessions.recorder import TurnRecorder
 class ScriptClient:
     """按调用次序出脚本的假流式客户端（主循环与子循环共用一个客户端）。"""
 
+    model = "test-model"  # Langfuse 上报取用的模型名
+
     def __init__(self, scripts: list[list[dict]]) -> None:
         self.scripts = list(scripts)
 
@@ -215,3 +217,63 @@ def test_subtask_missing_goal(recorder) -> None:
     events = _run(deps)
     done = next(e for e in events if e["type"] == "tool_completed")
     assert done["status"] == "failed"
+
+
+def test_subtask_tokens_counted(recorder, monkeypatch) -> None:
+    """子循环 usage 与主循环同口径：token_count 事件 + 会话 tokens_used 累计 + Langfuse 带 subtask_id。"""
+    from app.models import Session
+
+    # Langfuse 桩（复用 test_obs 的桩形态）记录全部 generation
+    class StubLangfuse:
+        def __init__(self) -> None:
+            self.generations: list[dict] = []
+
+        def trace(self, **kwargs):
+            class Trace:
+                def __init__(self, outer):
+                    self.outer = outer
+
+                def generation(self, **gen):
+                    self.outer.generations.append(gen)
+
+            return Trace(self)
+
+        def flush(self) -> None:
+            pass
+
+    stub = StubLangfuse()
+    monkeypatch.setattr("app.obs._langfuse_client", stub)
+
+    client = ScriptClient([
+        # 主循环第 1 步：派子助手（该步本身无 usage）
+        [{"type": "tool_use", "id": "st3", "name": "subtask", "input": {"goal": "算一下"}}],
+        # 子循环：输出 + usage（output=50）
+        [{"type": "text_delta", "text": "子助手结果"},
+         {"type": "usage", "input_tokens": 100, "output_tokens": 50}],
+        # 主循环第 2 步：收口 + usage（output=5）
+        [{"type": "text_delta", "text": "主收口"},
+         {"type": "usage", "input_tokens": 20, "output_tokens": 5}],
+    ])
+    deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
+                    history=[{"role": "user", "content": "派"}])
+    events = _run(deps)
+
+    # 1) token_count 事件：子循环的 50 在前、主循环的 5 在后
+    counts = [e["output_tokens"] for e in events if e["type"] == "token_count"]
+    assert counts == [50, 5]
+
+    # 2) 会话累计 = 子循环 50 + 主循环 5 = 55（turn 事实与会话行一致）
+    assert events[-1]["type"] == "turn_completed"
+    row = deps.recorder.db.get(Session, "s1")
+    assert row.tokens_used == 55
+
+    # 3) Langfuse：三步调用都有上报；子循环那次 metadata 带 subtask_id 且 usage 正确
+    assert len(stub.generations) == 3
+    sub_gen = next(g for g in stub.generations if "subtask_id" in g["metadata"])
+    assert sub_gen["output"] == "子助手结果"
+    assert sub_gen["usage"] == {"input": 100, "output": 50, "unit": "TOKENS"}
+    # 主循环调用不带 subtask_id；全部调用同一 turn_id
+    main_gens = [g for g in stub.generations if "subtask_id" not in g["metadata"]]
+    assert len(main_gens) == 2
+    turn_ids = {g["metadata"]["turn_id"] for g in stub.generations}
+    assert len(turn_ids) == 1
