@@ -106,6 +106,7 @@ SSE 事件（`event: <类型>` + `data: <JSON>`，15s 心跳）：
 frontend/src/
   api/client.ts        # fetch + SSE 解析
   types.ts             # 与后端 SSE/回放契约对应的类型
+  main.tsx             # BrowserRouter 入口
   hooks/useSessionStream.ts
   components/
     Sidebar.tsx        # 会话列表 + 呼吸点 + 新建/删除
@@ -118,6 +119,8 @@ frontend/src/
     Composer.tsx       # 输入框（Enter/Shift+Enter、停止按钮）
     MessageItem.tsx    # Markdown + 代码高亮 + 复制
 ```
+
+- **路由**（react-router-dom）：`/` 欢迎页；`/session/:sessionId` 会话视图（SessionView）。选中列表项/新建草稿即导航到对应地址；刷新按地址恢复会话回放——详情 404（草稿无落盘内容、未知或已删除 id）统一回首页。SessionView 以 `key=sessionId` 重挂载，天然隔离会话切换时的局部状态（详情、实时轮次、subtask 面板）。
 
 - **TurnGroup 状态机**：running 块头"工作中 {duration}"每秒 tick（仅 running 态允许用当前时钟）；completed"已工作 {duration}"取落盘 active_ms 固定值；stopped"已停止"强制展开；完成瞬间自动收起；历史回放同形态。
 - 视觉：浅色单主题——zinc-50 底 + 白面板 + zinc-200 发丝线 + zinc-900 正文；主按钮近黑 + 单一强调色；代码/数字/耗时用等宽字体；无渐变、无发光、无 emoji；Phosphor 图标；CSS transition 轻动效并尊重 prefers-reduced-motion；空/加载/错误态齐全。

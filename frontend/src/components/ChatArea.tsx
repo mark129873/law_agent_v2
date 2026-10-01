@@ -27,7 +27,6 @@ export interface ChatAreaProps {
   livePendingApproval: { request_id: string; tool: string; input: unknown; reason: string } | null
   onSend: (text: string) => void
   onStop: () => void
-  onNewSession: () => void
   /** 错误卡片"重试"→ 重新生成（保留用户消息重跑） */
   onRegenerate: () => void
   /** 审批决定提交后：父层刷新详情（留痕卡片翻状态） */
@@ -38,7 +37,7 @@ export interface ChatAreaProps {
 export function ChatArea(props: ChatAreaProps) {
   const {
     detail, liveTurn, isStreaming, currentId, streamError, livePendingApproval,
-    onSend, onStop, onNewSession, onRegenerate, onApprovalResolved, onOpenSubtask,
+    onSend, onStop, onRegenerate, onApprovalResolved, onOpenSubtask,
   } = props
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -54,25 +53,7 @@ export function ChatArea(props: ChatAreaProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [turns.length, liveTurn, liveTurn?.final_text, liveTurn?.work_items.length])
 
-  // ---------- 空状态：未选会话 ----------
-  if (!currentId) {
-    return (
-      <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-50">
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-800">个人助手</h1>
-        <p className="max-w-[28rem] text-center text-sm leading-relaxed text-zinc-500">
-          能读文件、跑命令、管任务、派子助手的本地工作伙伴。左侧新建一个会话，开始对话。
-        </p>
-        <button
-          type="button"
-          onClick={onNewSession}
-          className="rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px"
-        >
-          新建会话
-        </button>
-      </main>
-    )
-  }
-
+  // ---------- 会话视图（未选会话的欢迎页已由 App.tsx 的 `/` 路由承担） ----------
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-zinc-50">
       {/* 头部：标题 + token 用量 */}
