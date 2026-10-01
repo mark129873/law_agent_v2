@@ -31,7 +31,17 @@ FastAPI (uvicorn 127.0.0.1:8100, 无鉴权仅本机)
    └─ obs.py                  # logging(工程事件) + Langfuse(LLM 细节)
 ```
 
-## 3. 会话存储（单库四表 = 唯一事实源）
+## 3. 存储分工与会话存储
+
+### 3.0 存储三分工
+
+| 层 | 载体 | 记什么 | 不记什么 |
+|---|---|---|---|
+| 会话事实 | SQLite 四表（§3.1–3.5） | 用户消息、助手正文、**工具调用及结果**、subtask、审批留痕、turn 工时与 token 累计 | 调用级 prompt 快照；工程事件 |
+| 逐调用 LLM 快照 | `log/model-io-<sid>.jsonl`（§9，ZCode 同思想） | 每次 LLM 调用的 system/messages 全文、response、input/output tokens、耗时、错误 | ——（审计专用，不参与回放） |
+| 工程事件 | `backend/data/logs/app.log`（§9） | turn 生命周期、审批决定、压缩发生（只记事件与 id） | 对话正文 |
+
+参考对照：ZCode 同构四件套——会话事实 JSON 快照（`~/.zcode/v2/sessions/{hash}/{taskId}.json`）、model-io JSONL（`cli/rollout/`）、按天工程日志 JSONL（`cli/log/`）、用量聚合 SQLite（`cli/db/db.sqlite`）。差异：我们会话事实借其形态落 SQLite（Session 001 决策）；工程日志为纯文本 app.log；用量聚合见 §3.7 设计稿。
 
 ### 3.1 数据库约定
 
@@ -86,6 +96,21 @@ backend/data/
   workspace/          # 工具沙箱根（safe_path 限制于此）
   logs/               # app.log 滚动日志（5MB × 5 份）
 ```
+
+### 3.7 用量聚合（**设计稿，未实现**）
+
+> 目标：对齐 ZCode 的用量口径——输入/输出分开累计，真实 input 驱动 compact 预算与前端进度条。
+> 原则：**turn 事实为原子，会话聚合可重算**（沿用 tokens_used 的既有模式）；part 级不挂 token（一次调用的 usage 对应多个 part，无法自然归属，ZCode 亦然）；调用级明细仍只在 model-io JSONL（§3.0 分工不变）。
+
+| 改动点 | 内容 |
+|---|---|
+| turn 事实 | `session_entry(type=turn)` 的 data 增加 `input_tokens`；现有 `tokens_used`（输出累计）保留为兼容字段 |
+| session 表 | 增加 `input_tokens` 列（输出累计已有 `tokens_used`）；**不做迁移**——改表后删 `data/` 重建（产品决策 2026-09-28） |
+| 写入路径 | recorder 增加输入记账：usage 事件处累加 input；`end_turn` 事实带 input/output；同一处 `deps.last_input_tokens = input`——激活 compact 的"真实 usage 优先"（该字段当前无人赋值，实际永远走字符估算，是已知死路径） |
+| 重算 | `recalc_tokens_used` 扩展为同时重算 input_tokens（regenerate 回滚后修正，与输出同机制） |
+| 消费方 | ① compact 预算用真实 input 判定；② 前端 TokenBadge 改用"最近一次 input_tokens"为已用、`CONTEXT_WINDOW` 为上限（当前拿输出累计充当占用，口径失真）；③ GET /api/sessions 列表/详情透出 input |
+| 明确不做 | part 级 token 分摊；独立 usage 库（单体应用内聚同一 SQLite，ZCode 独立库源于其 CLI 进程与存储分离）；调用级明细落库（归 model-io JSONL） |
+| 验证 | 单测：turn 事实含 input/output、regenerate 重算一致性、compact 真实阈值生效、前端进度条口径 |
 
 ## 4. Agent 核心（mini_harness 移植 + 流式 + 可中断）
 

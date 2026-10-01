@@ -116,6 +116,7 @@
   - modelio 含对话正文，目录已 gitignore 但需注意勿外传
   - 沿用 Session 004 其余风险清单（见 session-handoff.md）
 - 下一步最佳动作：真实使用打磨；可选——把 loop.py usage 事件的 input_tokens 喂给 deps.last_input_tokens 激活 compact"真实 usage 优先"（当前该字段无人赋值，永远字符估算）
+- 追加（同日）：存储三分工（SQLite 事实 / model-io JSONL / app.log）写入 ARCHITECTURE §3.0；用量聚合设计稿落 ARCHITECTURE §3.7（turn 事实加 input_tokens + session 列 + 重算延伸 + compact/进度条消费，**未实现**，待用户确认后动工）
 
 
 
