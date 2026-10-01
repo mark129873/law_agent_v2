@@ -1,13 +1,28 @@
 /**
  * 消息渲染：Markdown + 代码高亮 + 悬停复制。
  * 用于：工作块外的最终回复、中间过程文本、用户气泡（纯文本变体）。
+ *
+ * 分包说明：react-markdown + rehype-highlight 体积大，真实实现移到
+ * Markdown.tsx，这里用 lazy+Suspense 包装转发——引用方（TurnGroup）
+ * 无感知，首次渲染 markdown 时才加载异步分包。
  */
 
-import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeHighlight from 'rehype-highlight'
+import { Suspense, lazy, useState } from 'react'
 
 import type { TodoItem, WorkItem } from '../types'
+
+// 懒加载 markdown 分包（default 导出 = MarkdownWithCopy）
+const LazyMarkdown = lazy(() => import('./Markdown'))
+
+/** 悬停复制的 Markdown 渲染：异步分包的转发壳（props 与原实现一致） */
+export function MarkdownWithCopy({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  return (
+    /* fallback 用等高的占位行，避免流式首帧高度跳动 */
+    <Suspense fallback={<div className="text-[15px] leading-relaxed text-zinc-300">…</div>}>
+      <LazyMarkdown text={text} streaming={streaming} />
+    </Suspense>
+  )
+}
 
 // 状态词映射（产品文档 §3.3）
 export const TOOL_STATUS_WORD: Record<string, string> = {
@@ -32,39 +47,6 @@ export function inputSummary(input: unknown): string {
 
 function ensureAsciiNone(_k: string, v: unknown) {
   return v
-}
-
-/** 最终回复 / 中间文本：Markdown 渲染 + 悬停复制按钮 */
-export function MarkdownWithCopy({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    } catch {
-      /* 剪贴板不可用时静默 */
-    }
-  }
-
-  return (
-    <div className="group relative">
-      {/* 正文：markdown 渲染；生成中尾部加光标 */}
-      <div className={`text-[15px] leading-relaxed ${streaming ? 'stream-cursor' : ''}`}>
-        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{text}</ReactMarkdown>
-      </div>
-      {/* 复制按钮：悬停出现 */}
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="absolute -top-1 right-0 hidden rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] text-zinc-500 transition hover:text-zinc-800 group-hover:block"
-        aria-label="复制"
-      >
-        {copied ? '已复制' : '复制'}
-      </button>
-    </div>
-  )
 }
 
 /** 用户消息气泡：右对齐浅灰底纯文本 */
