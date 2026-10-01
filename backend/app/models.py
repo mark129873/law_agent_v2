@@ -1,6 +1,6 @@
 """实体表定义：ZCode session-store 同款的四表结构。
 
-设计要点（docs/ARCHITECTURE.md §2）：
+设计要点（docs/ARCHITECTURE.md §3）：
 - SQLite 单库是会话内容的唯一事实源，所有可变结构数据放 data JSON 列；
 - sequence 决定时间线顺序：首次取 max+1，之后永不改动（冲突时原样保留），
   这是 ZCode 防止"二次保存导致时间线漂移"的关键规则；
@@ -102,7 +102,7 @@ class Part(Base):
 class SessionEntry(Base):
     """会话事实表：不挂在具体消息上的会话级事实。
 
-    type 与 data JSON 约定（docs/ARCHITECTURE.md §2.2）：
+    type 与 data JSON 约定（docs/ARCHITECTURE.md §3.4）：
     - turn:       {"turn_id","started_at","ended_at","active_ms","state"}  工作块数据源
     - approval:   {"request_id","tool","approved","time"}                  审批留痕
     - compaction: {"summary_message_id","tokens_before","tokens_after"}     压缩事实

@@ -1,6 +1,6 @@
 """会话回放层：从四表读出并拼装成上层需要的结构。
 
-两个出口（docs/ARCHITECTURE.md §2.3）：
+两个出口（docs/ARCHITECTURE.md §3.5）：
 - load_replay：给前端的完整回放（按 turn 分组：用户消息 → 工作块条目 → 最终回复）；
 - load_history：给 agent 的模型可见历史（Anthropic messages 形态，含工具块与
   compact 边界裁剪）。

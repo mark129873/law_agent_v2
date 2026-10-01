@@ -1,5 +1,5 @@
 /**
- * 类型定义：与后端 SSE / 回放契约一一对应（docs/ARCHITECTURE.md §5）。
+ * 类型定义：与后端 SSE / 回放契约一一对应（docs/ARCHITECTURE.md §6）。
  * 后端字段用 epoch 毫秒浮点，前端保持一致不做转换。
  */
 
@@ -121,5 +121,4 @@ export type SseEvent =
       active_ms: number
       state: 'success' | 'stopped' | 'failed'
     }
-  | { type: 'turn_aborted' }
   | { type: 'error'; message: string }

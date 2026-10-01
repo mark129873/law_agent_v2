@@ -1,4 +1,4 @@
-"""上下文压缩：ZCode compact 思路的移植（docs/ARCHITECTURE.md §4）。
+"""上下文压缩：ZCode compact 思路的移植（docs/ARCHITECTURE.md §5）。
 
 策略（从便宜到贵）：
 1. 不动：估算/真实 token 未超预算 → 什么都不做；
