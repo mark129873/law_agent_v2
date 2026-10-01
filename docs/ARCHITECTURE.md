@@ -122,6 +122,7 @@ frontend/src/
 
 - **路由**（react-router-dom）：`/` 欢迎页；`/session/:sessionId` 会话视图（SessionView）。选中列表项/新建草稿即导航到对应地址；刷新按地址恢复会话回放——详情 404（草稿无落盘内容、未知或已删除 id）统一回首页。SessionView 以 `key=sessionId` 重挂载，天然隔离会话切换时的局部状态（详情、实时轮次、subtask 面板）。
 - **代码分包**：Markdown 渲染（react-markdown + rehype-highlight，体积大头）拆在 `components/Markdown.tsx`，经 MessageItem 的 `lazy+Suspense` 包装按需加载——首屏主包不含 highlight 语法库，低于 Vite 500kB 告警阈值。
+- **壳层开合**（ZCode 工作台同语义）：`ShellContext` 持有左栏开合状态（localStorage 持久化，key `ui.sidebar`），`Sidebar` 收起时宽度归零（瞬时切换不做 width 动画）；切换按钮常驻头部/欢迎页（Phosphor `SidebarSimple`）；右栏 subtask 面板保持"点卡打开、X 收起、再点恢复"。
 
 - **TurnGroup 状态机**：running 块头"工作中 {duration}"每秒 tick（仅 running 态允许用当前时钟）；completed"已工作 {duration}"取落盘 active_ms 固定值；stopped"已停止"强制展开；完成瞬间自动收起；历史回放同形态。
 - 视觉：浅色单主题——zinc-50 底 + 白面板 + zinc-200 发丝线 + zinc-900 正文；主按钮近黑 + 单一强调色；代码/数字/耗时用等宽字体；无渐变、无发光、无 emoji；Phosphor 图标；CSS transition 轻动效并尊重 prefers-reduced-motion；空/加载/错误态齐全。

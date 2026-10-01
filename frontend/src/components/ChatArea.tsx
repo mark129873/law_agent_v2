@@ -8,11 +8,13 @@
  */
 
 import { useEffect, useRef } from 'react'
+import { SidebarSimple } from '@phosphor-icons/react'
 
 import { ApprovalModal, pendingFromDetail } from './ApprovalModal'
 import { TokenBadge } from './TokenBadge'
 import { TurnGroup } from './TurnGroup'
 import { Composer } from './Composer'
+import { useShell } from '../ShellContext'
 import type { PendingApproval } from './ApprovalModal'
 import type { SubtaskItem } from './SubtaskViewer'
 import type { SessionDetail, TurnData } from '../types'
@@ -39,6 +41,7 @@ export function ChatArea(props: ChatAreaProps) {
     detail, liveTurn, isStreaming, currentId, streamError, livePendingApproval,
     onSend, onStop, onRegenerate, onApprovalResolved, onOpenSubtask,
   } = props
+  const { sidebarOpen, toggleSidebar } = useShell()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const turns = detail?.turns ?? []
@@ -56,8 +59,20 @@ export function ChatArea(props: ChatAreaProps) {
   // ---------- 会话视图（未选会话的欢迎页已由 App.tsx 的 `/` 路由承担） ----------
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-zinc-50">
-      {/* 头部：标题 + token 用量 */}
-      <header className="flex items-center gap-3 border-b border-zinc-200 bg-white px-5 py-3">
+      {/* 头部：侧栏开关 + 标题 + token 用量 */}
+      <header className="flex items-center gap-2 border-b border-zinc-200 bg-white px-3 py-3">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className={`rounded-md p-1.5 transition hover:bg-zinc-100 ${
+            sidebarOpen ? 'text-zinc-700' : 'text-zinc-400'
+          }`}
+          aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+          aria-pressed={sidebarOpen}
+          title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+        >
+          <SidebarSimple size={16} weight="regular" />
+        </button>
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
           {detail?.session.title || '新会话'}
           {liveTurn?.state === 'running' && (

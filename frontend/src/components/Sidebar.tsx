@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { createSession, deleteSession, listSessions } from '../api/client'
+import { useShell } from '../ShellContext'
 import type { SessionItem } from '../types'
 
 export interface SidebarProps {
@@ -45,9 +46,9 @@ function BreathingDot() {
 
 export function Sidebar(props: SidebarProps) {
   const { sessions, currentId, onSelect, onSessionsChange, onDraftCreated } = props
+  const { sidebarOpen } = useShell()
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
-
   const refresh = useCallback(async () => {
     try {
       onSessionsChange(await listSessions())
@@ -89,18 +90,25 @@ export function Sidebar(props: SidebarProps) {
   )
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-white">
-      {/* 新建按钮（主操作：近黑） */}
-      <div className="p-3">
-        <button
-          type="button"
-          onClick={handleNew}
-          disabled={creating}
-          className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px disabled:opacity-50"
-        >
-          新建会话
-        </button>
-      </div>
+    /* 收起态：宽度归零并去边框（瞬时切换，不做 width 动画）；
+       内层固定 w-64，避免收起过程中内容被挤压变形 */
+    <aside
+      className={`shrink-0 overflow-hidden bg-white ${
+        sidebarOpen ? 'w-64 border-r border-zinc-200' : 'w-0'
+      }`}
+    >
+      <div className="flex h-full w-64 flex-col">
+        {/* 新建按钮（主操作：近黑） */}
+        <div className="p-3">
+          <button
+            type="button"
+            onClick={handleNew}
+            disabled={creating}
+            className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px disabled:opacity-50"
+          >
+            新建会话
+          </button>
+        </div>
 
       {/* 会话列表 */}
       <nav className="flex-1 overflow-y-auto px-2 pb-3" aria-label="会话列表">
@@ -186,6 +194,7 @@ export function Sidebar(props: SidebarProps) {
           })}
         </ul>
       </nav>
+      </div>
     </aside>
   )
 }

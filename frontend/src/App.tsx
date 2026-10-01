@@ -19,8 +19,13 @@ import { ChatArea } from './components/ChatArea'
 import { Sidebar } from './components/Sidebar'
 import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
 import { ApiError, createSession, getSessionDetail, stopTurn } from './api/client'
+import { ShellContext, useShell } from './ShellContext'
 import { useSessionStream } from './hooks/useSessionStream'
+import { SidebarSimple } from '@phosphor-icons/react'
 import type { SessionDetail, SessionItem } from './types'
+
+/** 左栏开合的本地记忆键：ZCode 同语义（isSidebarVisible 持久化） */
+const SIDEBAR_STORAGE_KEY = 'ui.sidebar'
 
 export default function App() {
   // BrowserRouter 已在 main.tsx 提供，这里只做布局与路由分发
@@ -38,6 +43,26 @@ function AppShell() {
   // "未知/已删会话"——前者留在空对话态等首条消息落库，后者才回首页
   const draftIdsRef = useRef<Set<string>>(new Set())
 
+  // 左栏开合：初始值读本地记忆，切换时写回（ZCode 工作台同款持久化）
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_STORAGE_KEY) !== 'collapsed'
+    } catch {
+      return true // localStorage 不可用（隐私模式等）：默认展开
+    }
+  })
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((open) => {
+      const next = !open
+      try {
+        localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? 'open' : 'collapsed')
+      } catch {
+        /* 写不进去就只当次会话生效 */
+      }
+      return next
+    })
+  }, [])
+
   /** 导航进入指定会话（选中列表项与新建草稿共用同一动作） */
   const openSession = useCallback(
     (id: string) => navigate(`/session/${id}`),
@@ -52,33 +77,42 @@ function AppShell() {
   }, [openSession])
 
   return (
-    <>
-      {/* 左栏：会话列表 */}
-      <Sidebar
-        sessions={sessions}
-        currentId={currentId}
-        onSelect={openSession}
-        onSessionsChange={setSessions}
-        onDraftCreated={openSession}
-      />
-
-      <Routes>
-        {/* 欢迎页 + 会话视图；其余任意地址兜底回欢迎页 */}
-        <Route path="/" element={<WelcomePage onNewSession={handleNewSession} />} />
-        <Route
-          path="/session/:sessionId"
-          element={<SessionRoute draftIdsRef={draftIdsRef} />}
+    /* 三栏布局的 flex 容器：侧栏与路由出口（中/右栏）必须并排，
+       不能换成 Fragment——容器一旦消失，侧栏与主区会垂直堆叠（实测踩过） */
+    <ShellContext.Provider value={{ sidebarOpen, toggleSidebar }}>
+      <div className="flex h-full">
+        {/* 左栏：会话列表 */}
+        <Sidebar
+          sessions={sessions}
+          currentId={currentId}
+          onSelect={openSession}
+          onSessionsChange={setSessions}
+          onDraftCreated={openSession}
         />
-        <Route path="*" element={<WelcomePage onNewSession={handleNewSession} />} />
-      </Routes>
-    </>
+
+        <Routes>
+          {/* 欢迎页 + 会话视图；其余任意地址兜底回欢迎页 */}
+          <Route path="/" element={<WelcomePage onNewSession={handleNewSession} />} />
+          <Route
+            path="/session/:sessionId"
+            element={<SessionRoute draftIdsRef={draftIdsRef} />}
+          />
+          <Route path="*" element={<WelcomePage onNewSession={handleNewSession} />} />
+        </Routes>
+      </div>
+    </ShellContext.Provider>
   )
 }
 
 /** `/` 欢迎页：未选会话时的空状态（原来在 ChatArea 里的未选中分支） */
 function WelcomePage({ onNewSession }: { onNewSession: () => void }) {
+  const { sidebarOpen, toggleSidebar } = useShell()
   return (
-    <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-50">
+    <main className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-50">
+      {/* 左栏开合按钮：常驻左上角（侧栏收起后仍可找回） */}
+      <div className="absolute left-3 top-3">
+        <SidebarToggle sidebarOpen={sidebarOpen} onToggle={toggleSidebar} />
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight text-zinc-800">个人助手</h1>
       <p className="max-w-[28rem] text-center text-sm leading-relaxed text-zinc-500">
         能读文件、跑命令、管任务、派子助手的本地工作伙伴。左侧新建一个会话，开始对话。
@@ -91,6 +125,24 @@ function WelcomePage({ onNewSession }: { onNewSession: () => void }) {
         新建会话
       </button>
     </main>
+  )
+}
+
+/** 左栏开合图标按钮（Phosphor SidebarSimple，两态高亮区分） */
+function SidebarToggle({ sidebarOpen, onToggle }: { sidebarOpen: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`rounded-md p-1.5 transition hover:bg-zinc-100 ${
+        sidebarOpen ? 'text-zinc-700' : 'text-zinc-400'
+      }`}
+      aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+      aria-pressed={sidebarOpen}
+      title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+    >
+      <SidebarSimple size={16} weight="regular" />
+    </button>
   )
 }
 

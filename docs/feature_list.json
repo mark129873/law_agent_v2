@@ -134,6 +134,30 @@
       "status": "passing",
       "evidence": "浏览器实测：重新生成按钮(保留用户消息重跑)、subtask 卡片+右侧面板(实时输出)、连续只读≥2 聚合探索组/bash≥2 聚合执行组、已压缩提示；E2E 全流程联调通过",
       "testedAt": "2026-09-28"
+    },
+    {
+      "id": "BE-011",
+      "name": "subtask token 计入",
+      "description": "subtask 子循环的 usage 事件与主循环同口径处理：累计会话 tokens_used、发 token_count 事件、Langfuse 上报带 subtask_id 元数据",
+      "status": "passing",
+      "evidence": "pytest 71 passed：新增 test_subtask_tokens_counted——token_count 事件序列(子50→主5)、会话累计 55 与 turn 事实一致、3 次 generation 中子循环那次 metadata 带 subtask_id 且 usage 正确、主循环调用不带；ARCHITECTURE §3/§6 已同步",
+      "testedAt": "2026-10-01"
+    },
+    {
+      "id": "FE-006",
+      "name": "路由、刷新恢复与可收起三栏壳层",
+      "description": "react-router-dom：/ 欢迎页 + /session/:id 会话视图，刷新按地址恢复回放，404 分流(自家草稿留空态/未知回首页)；左中右三栏(ZCode 工作台同款)，左栏经头部按钮开合并本地记忆，右栏 subtask 面板点卡打开/X 收起/再点恢复",
+      "status": "passing",
+      "evidence": "浏览器实测(截图 tmp/gui-verify/)：直链/刷新恢复回放、未知地址回首页、草稿态与草稿刷新回首页、侧栏收起+刷新保持(aria-pressed)、右栏面板开合；过程中发现并修复 fragment 丢 flex 容器的布局回归(截图对照)；npm build 通过",
+      "testedAt": "2026-10-01"
+    },
+    {
+      "id": "FE-007",
+      "name": "代码分包",
+      "description": "markdown 渲染(react-markdown+rehype-highlight)拆独立模块经 lazy+Suspense 按需加载，首屏主包不含 highlight，低于 Vite 500kB 告警阈值",
+      "status": "passing",
+      "evidence": "npm run build：index 284.40kB + Markdown 异步包 284.35kB(此前主包 568.79kB 超阈值告警，现已无告警)；浏览器实测回放 markdown 渲染与复制按钮正常(lazy 链路加载成功)",
+      "testedAt": "2026-10-01"
     }
   ]
 }
