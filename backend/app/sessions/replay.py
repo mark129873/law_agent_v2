@@ -16,7 +16,8 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app.models import Message, Part, Session
+from app.config import settings
+from app.models import Message, Part, Session, now_ms
 from app.sessions.store import _load, entry_data, list_entries
 
 
@@ -47,12 +48,14 @@ def load_replay(
     turn_facts: dict[str, dict] = {}
     approvals: list[dict] = []
     compactions: list[dict] = []
+    context_used = 0  # 最近一轮"最后一步 input"≈当前上下文占用（进度条口径）
     for entry in list_entries(db, session_id):
         data = entry_data(entry)
         # turn_id 优先取列（新数据），回退 data JSON（兼容）
         turn_label = entry.turn_id or data.get("turn_id", "")
         if entry.type == "turn":
             turn_facts[data.get("turn_id", "")] = data
+            context_used = int(data.get("context_tokens", 0) or 0)  # 时间升序，后者覆盖
         elif entry.type == "approval":
             approvals.append({**data, "turn_id": turn_label})
         elif entry.type == "compaction":
@@ -214,6 +217,9 @@ def load_replay(
             "created_at": session_row.created_at,
             "updated_at": session_row.updated_at,
             "tokens_used": session_row.tokens_used,
+            "input_tokens": session_row.input_tokens,
+            "context_used": context_used,
+            "context_window": settings.context_window,
         },
         "turns": result_turns,
         "pending_approval": pending,
@@ -315,9 +321,22 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
     return result
 
 
-def recalc_tokens_used(db: DbSession, session_id: str) -> int:
-    """从 turn 事实重算会话累计 token（重新生成/软删后修正用）。"""
-    total = 0
+def recalc_session_usage(db: DbSession, session_id: str) -> None:
+    """从 turn 事实重算会话 token 用量（重新生成回滚后修正用）。
+
+    修一个历史潜伏 bug：旧实现 recalc_tokens_used 是孤儿函数从未被接线，
+    导致 regenerate 删除旧轮事实后 session.tokens_used 仍保留被删轮的累计。
+    现在同时重算输出/输入两列并落库。
+    """
+    output_total = 0
+    input_total = 0
     for entry in list_entries(db, session_id, "turn"):
-        total += int(entry_data(entry).get("tokens_used", 0))
-    return total
+        data = entry_data(entry)
+        output_total += int(data.get("tokens_used", 0))
+        input_total += int(data.get("input_tokens", 0))
+    row = db.get(Session, session_id)
+    if row is not None:
+        row.tokens_used = output_total
+        row.input_tokens = input_total
+        row.updated_at = now_ms()
+        db.commit()

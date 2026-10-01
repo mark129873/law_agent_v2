@@ -163,7 +163,11 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                             "input_tokens": event.get("input_tokens", 0),
                             "output_tokens": event.get("output_tokens", 0),
                         }
-                        deps.recorder.add_tokens(event.get("output_tokens", 0))
+                        deps.recorder.add_usage(
+                            step_usage["input_tokens"], step_usage["output_tokens"]
+                        )
+                        # 真实 input 喂给 compact 预算（此前该字段无人赋值，只能字符估算）
+                        deps.last_input_tokens = step_usage["input_tokens"]
                         yield {
                             "type": "token_count",
                             "input_tokens": event.get("input_tokens", 0),

@@ -116,7 +116,8 @@
   - modelio 含对话正文，目录已 gitignore 但需注意勿外传
   - 沿用 Session 004 其余风险清单（见 session-handoff.md）
 - 下一步最佳动作：真实使用打磨；可选——把 loop.py usage 事件的 input_tokens 喂给 deps.last_input_tokens 激活 compact"真实 usage 优先"（当前该字段无人赋值，永远字符估算）
-- 追加（同日）：存储三分工（SQLite 事实 / model-io JSONL / app.log）写入 ARCHITECTURE §3.0；用量聚合设计稿落 ARCHITECTURE §3.7（turn 事实加 input_tokens + session 列 + 重算延伸 + compact/进度条消费，**未实现**，待用户确认后动工）
+- 追加（同日）：存储三分工（SQLite 事实 / model-io JSONL / app.log）写入 ARCHITECTURE §3.0；用量聚合设计稿落 ARCHITECTURE §3.7
+- 追加（同日，实施）：**用量聚合已实现**（§3.7 转已实现）——turn 事实 +input_tokens/context_tokens、session +input_tokens 列（已删库重建）、recorder.add_usage 取代 add_tokens、主循环喂 last_input_tokens 激活 compact 真实预算、**顺带修复潜伏 bug**（recalc_tokens_used 原是孤儿函数从未接线，regenerate 被删轮 token 双算；重写为 recalc_session_usage 并接线）、TokenBadge 改真实占用口径；pytest **70 passed**（+test_usage_aggregation 2 例，subtask 计入扩断言）、npm build 通过、浏览器实测徽标 1.8k/1.0M·0%（截图 v4-usage-badge.png）；feature_list +BE-013 passing
 
 
 

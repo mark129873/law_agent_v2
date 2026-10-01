@@ -21,7 +21,9 @@ class TurnRecorder:
         self._started_at: float | None = None
         self._pause_started: float | None = None
         self._paused_ms: float = 0.0
-        self.tokens_used = 0
+        self.tokens_used = 0  # 本轮输出 token 累计
+        self.tokens_input = 0  # 本轮输入 token 累计（用量聚合）
+        self._last_input = 0  # 最近一步的 input（≈当前上下文占用，进度条口径）
         # 本轮用户消息的 sequence（compact 边界：在此之前的历史才可被摘要）
         self.first_user_sequence = 0
 
@@ -30,9 +32,11 @@ class TurnRecorder:
         """turn 开始时间（事件用，避免外部摸私有字段）。"""
         return self._started_at
 
-    def add_tokens(self, output_tokens: int) -> None:
-        """累计本次 turn 的输出 token（usage 事件驱动）。"""
+    def add_usage(self, input_tokens: int, output_tokens: int) -> None:
+        """累计本次 turn 的 token 用量（usage 事件驱动，输入输出分开记账）。"""
         self.tokens_used += output_tokens
+        self.tokens_input += input_tokens
+        self._last_input = input_tokens
 
     # ---------- 生命周期 ----------
 
@@ -77,7 +81,8 @@ class TurnRecorder:
     def end_turn(self, state: str) -> dict:
         """turn 收口：写 turn 事实（工作块数据源），累计 token 到会话。
 
-        tokens_used 取本 turn 内 add_tokens 累计的值（usage 事件驱动）。
+        tokens_used=输出累计、input_tokens=输入累计、context_tokens=最近一步
+        input（≈当前上下文占用，进度条口径），均由 usage 事件驱动。
         """
         self.resume_active()  # 若停在审批等待中收口，先把暂停段结掉
         ended_at = now_ms()
@@ -89,14 +94,17 @@ class TurnRecorder:
             "active_ms": active_ms,
             "state": state,
             "tokens_used": self.tokens_used,
+            "input_tokens": self.tokens_input,
+            "context_tokens": self._last_input,
         }
         store.put_entry(self.db, self.session_id, "turn", fact, turn_id=self.turn_id)
-        # 会话累计 token：直接累加（重新生成时会由 BE-9 重算修正）
+        # 会话累计 token：直接累加（重新生成时会由 recalc 重算修正）
         from app.models import Session
 
         row = self.db.get(Session, self.session_id)
         if row is not None:
             row.tokens_used += self.tokens_used
+            row.input_tokens += self.tokens_input
             row.updated_at = now_ms()
             self.db.commit()
         return fact

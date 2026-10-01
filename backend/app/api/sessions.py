@@ -80,6 +80,7 @@ def list_sessions(db_session: DbSession = Depends(db.get_db)) -> list[dict]:
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "tokens_used": row.tokens_used,
+                "input_tokens": row.input_tokens,
                 "running": turn_manager.is_running(row.id),
             }
         )
@@ -166,6 +167,8 @@ async def regenerate_turn(
 
     # 回滚：删该轮 assistant 行（级联 parts）与该轮事实；用户消息保留并改挂新轮
     store.rollback_turn(turn_db, session_id, last_user.turn_id, last_user.sequence)
+    # 重算会话用量：被删轮的累计不再计入（旧实现漏了这步，被删轮 token 会双算）
+    replay.recalc_session_usage(turn_db, session_id)
     last_user.turn_id = recorder.turn_id
     turn_db.commit()
 

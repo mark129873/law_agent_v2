@@ -33,7 +33,8 @@ class Session(Base):
     """会话表：一行一个会话。
 
     title 由首条用户消息截断 30 字生成，不可重命名（产品决策）。
-    tokens_used 是累计缓存值，turn 收口时由回放重算后更新。
+    tokens_used 是输出 token 累计、input_tokens 是输入 token 累计：
+    turn 收口时累加，regenerate 回滚后由 turn 事实重算修正。
     """
 
     __tablename__ = "session"
@@ -46,6 +47,7 @@ class Session(Base):
     # 软删除标记：非空 = 已删。列表/回放一律过滤。
     deleted_at: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Message(Base):

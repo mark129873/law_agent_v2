@@ -104,6 +104,14 @@
       "testedAt": "2026-10-01"
     },
     {
+      "id": "BE-013",
+      "name": "用量聚合(SQLite)",
+      "description": "turn 事实 data 增加 input_tokens(输入累计)/context_tokens(最近一步 input≈上下文占用)；session 表 +input_tokens 列(与 tokens_used 输出并排)；主循环喂 deps.last_input_tokens 激活 compact 真实预算；recalc_session_usage 接线到 regenerate 修复被删轮双算；TokenBadge 改真实占用口径(used/window+百分比)；part 级分摊与独立 usage 库明确不做",
+      "status": "passing",
+      "evidence": "pytest 70 passed：新增 test_usage_aggregation 2 例(turn 事实三级字段+会话双列+last_input=9；回滚重算 7/29→3/9)；subtask 计入测试扩 input 断言(120/20)；npm build 通过；浏览器实测徽标 1.8k/1.0M·0%(截图 tmp/gui-verify/v4-usage-badge.png)；改表已删库重建",
+      "testedAt": "2026-10-01"
+    },
+    {
       "id": "FE-001",
       "name": "前端脚手架+三栏布局",
       "description": "Vite+React18+TS+Tailwind v4、三栏布局(侧栏/对话流/subtask面板)、浅色 zinc 主题、中文 UI、api/client.ts(fetch+SSE 解析)、types.ts、Vite 代理 /api→8000、npm build 通过",

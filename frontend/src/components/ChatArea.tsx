@@ -79,7 +79,7 @@ export function ChatArea(props: ChatAreaProps) {
             <span className="ml-2 text-xs font-normal text-sky-600">生成中…</span>
           )}
         </h1>
-        <TokenBadge tokens={detail?.session.tokens_used} />
+        <TokenBadge used={detail?.session.context_used} window={detail?.session.context_window} />
       </header>
 
       {/* 消息流 */}

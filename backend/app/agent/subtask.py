@@ -77,13 +77,16 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                     elif kind == "tool_use":
                         tool_uses.append(event)
                     elif kind == "usage":
-                        # 子循环 token 与主循环同口径：计入会话统计（add_tokens），
-                        # 并发 token_count 事件给前端（经生成器逐层转发出 SSE）
+                        # 子循环 token 与主循环同口径：计入会话统计（add_usage），
+                        # 并发 token_count 事件给前端（经生成器逐层转发出 SSE）。
+                        # 注意不喂 deps.last_input_tokens——那是主循环 compact 预算的口径
                         step_usage = {
                             "input_tokens": event.get("input_tokens", 0),
                             "output_tokens": event.get("output_tokens", 0),
                         }
-                        deps.recorder.add_tokens(step_usage["output_tokens"])
+                        deps.recorder.add_usage(
+                            step_usage["input_tokens"], step_usage["output_tokens"]
+                        )
                         yield {"type": "token_count", **step_usage}
             except Exception as exc:
                 llm_error = str(exc)  # 记入 model-io（该次调用失败），再交给外层统一处理

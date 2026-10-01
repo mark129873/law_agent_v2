@@ -3,28 +3,30 @@
 ## 当前已验证
 
 - 现在明确可用的部分：
-  - 后端 11 功能 + 前端 8 功能：BE-010(Langfuse) 已 deprecated，BE-012(model-io JSONL) passing（docs/feature_list.json）
-  - 观测双系统改为：logging（工程事件）+ model-io JSONL（逐次 LLM 调用全量快照：system/messages/response/usage/耗时/错误），位于项目根 `log/model-io-<session_id>.jsonl`（已 gitignore）
+  - 后端 12 功能 + 前端 8 功能：BE-010(Langfuse) deprecated，BE-012(model-io JSONL)/BE-013(用量聚合) passing
+  - 观测三层分工（ARCHITECTURE §3.0）：SQLite 会话事实（含 turn 级 input/output/context 三级 token 字段与会话双列累计）+ model-io JSONL（逐调用全量快照，`log/`）+ app.log 工程事件
+  - compact 预算已激活真实 input（deps.last_input_tokens 由主循环 usage 事件喂入，原死路径）；前端 TokenBadge 显示真实上下文占用（context_used/context_window+百分比）
+  - regenerate 回滚后由 recalc_session_usage 重算双列（修复被删轮 token 双算的潜伏 bug）
   - 前端已有路由：`/` 欢迎页、`/session/:id` 会话视图；刷新/直链按地址恢复回放；未知与已删地址回首页，应用内新建的草稿留在空对话态
   - 三栏壳层对齐 ZCode 工作台语义：左栏头部按钮开合（localStorage 记忆 `ui.sidebar`），右栏 subtask 面板点卡打开/X 收起/再点恢复
-  - subtask 子循环 token 已计入会话统计与 model-io JSONL（带 subtask_id）
   - 前端分包：markdown（react-markdown+highlight）在异步包，主包 284kB，无 Vite 告警
-- 这轮实际跑过的验证：`uv run pytest -q` 68 passed（Langfuse 6 例删除，model-io 3 例新增）；`npm run build` 无告警；清库真实启动 health/空列表正常；grep 全仓无 langfuse 残留；UI 回归靠截图视觉验收（本机 IAB 的 Playwright 点击不可靠，用 evaluate 触发）
+- 这轮实际跑过的验证：`uv run pytest -q` **70 passed**（model-io 3 例 + 用量聚合 2 例新增）；`npm run build` 无告警；清库真实启动 + fixture 会话浏览器实测徽标（tmp/gui-verify/v4-usage-badge.png）；UI 回归靠截图视觉验收（本机 IAB 的 Playwright 点击不可靠，用 evaluate 触发）
 
 ## 本轮改动
 
 - 修复了哪些缺陷：
   - docs/clean-state-checklist.md 顶部是 v1 遗留核对结果（Session 065/276测试/Milvus/RAG），已重写为 v2 自包含清单
   - **布局回归（Session 004 踩坑）**：路由重构曾把三栏 flex 容器写成 Fragment，侧栏与主区垂直堆叠；DOM 断言查不出，截图发现后已修复。教训已写入 progress.md：UI 改动必须截图做视觉验收
-- 新增功能：路由与刷新恢复（FE-006）、subtask token 计入（BE-011）、代码分包（FE-007）、左/右栏可收起壳层（并入 FE-006）、model-io JSONL 逐调用记录（BE-012，替代 Langfuse）
+  - **regenerate token 双算（潜伏 bug）**：recalc_tokens_used 原是孤儿函数从未接线，回滚删事实后 session 累计不修正；已重写为 recalc_session_usage 并接线
+- 新增功能：路由与刷新恢复（FE-006）、subtask token 计入（BE-011）、代码分包（FE-007）、左/右栏可收起壳层（并入 FE-006）、model-io JSONL 逐调用记录（BE-012，替代 Langfuse）、用量聚合（BE-013）
 - 移除：Langfuse SDK 及全部接线（obs/config/main/pyproject/.env.example/test_obs.py）
 
 ## 仍损坏或未验证
 
 - 当前blocker：无
 - 已知缺陷和风险：
-  - deps.last_input_tokens 声明后无人赋值——compact 的"真实 usage 优先"是死路径，永远字符估算（最小修复：loop.py usage 事件处喂一行）
   - model-io 文件无轮转/上限，超长会话文件会大
+  - cache 计量（cache_read/cache_creation）未采集——按端点能力后续在 turn 事实 data 加键即可（零迁移）
   - subtask"执行中→已完成"翻转瞬间仍未直接观测（机制等价已验证）
   - 历史消息全量加载，超长会话可能卡（分页/虚拟化留 v2）
   - failed 轮回放块头显示"已 stopped"（语义可再分）
@@ -34,10 +36,10 @@
 
 ## 下一步最佳动作
 
-- 最高优先级未完成功能：真实使用打磨——工具卡 autoOpen、长会话分页/虚拟化；可选小修——激活 compact 的真实 input_tokens 预算
-- 为什么它是下一步：18 项功能全部 passing/deprecated 且无未验证路径，进入打磨期
+- 最高优先级未完成功能：真实使用打磨——工具卡 autoOpen、长会话分页/虚拟化
+- 为什么它是下一步：功能清单全部 passing/deprecated 且无未验证路径，进入打磨期
 - 什么结果才算 passing：按 feature_list 对应项补充证据（分页需大数据量会话实测）
-- 这一步中哪些东西不要动：存储层契约（四表/回放结构）、SSE 事件类型、工作块状态机、_turn_sse_response 的单队列约定（审批事件依赖它）、ShellContext 的 Provider 包裹层级（掉了会复现布局堆叠）、modelio.py 的吞异常纪律（观测不能挡主流程）
+- 这一步中哪些东西不要动：存储层契约（四表/回放结构）、SSE 事件类型、工作块状态机、_turn_sse_response 的单队列约定（审批事件依赖它）、ShellContext 的 Provider 包裹层级（掉了会复现布局堆叠）、modelio.py 的吞异常纪律（观测不能挡主流程）、recalc_session_usage 与 regenerate 的接线（删了会复发 token 双算）
 
 ## 命令
 

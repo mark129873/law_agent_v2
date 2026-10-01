@@ -56,7 +56,7 @@ FastAPI (uvicorn 127.0.0.1:8100, 无鉴权仅本机)
 
 | 表 | 列 | 关键约定 |
 |---|---|---|
-| `session` | id, title, model, created_at, updated_at, deleted_at?, tokens_used | title=首条消息截断 30 字不可改名；tokens_used=turn 收口累加（regenerate 时重算修正） |
+| `session` | id, title, model, created_at, updated_at, deleted_at?, tokens_used, input_tokens | title=首条消息截断 30 字不可改名；tokens_used=输出累计、input_tokens=输入累计（turn 收口累加，regenerate 时重算修正） |
 | `message` | id, session_id, sequence, **turn_id**, role(user/assistant), data, time_created, time_updated | data={"text"}；turn 是行上的标签不是容器，回放按它分组 |
 | `part` | id, message_id, session_id, sequence, **turn_id**, kind, data, time_created, time_updated | kind：text / tool_call / subtask / todo；工具按生命周期逐态 upsert 同一行 |
 | `session_entry` | id, session_id, type, **turn_id**, data, time_created | 会话级事实，**只插入不更新**；turn_id 支撑按轮回滚 |
@@ -76,7 +76,7 @@ FastAPI (uvicorn 127.0.0.1:8100, 无鉴权仅本机)
 
 | type | data | 消费方 |
 |---|---|---|
-| turn | {turn_id, started_at, ended_at, active_ms, state} | 工作块头。**active_ms=服务端权威工时，排除审批等待**，收口一次写定；前端历史耗时只取落盘值，禁止用当前时钟推算 |
+| turn | {turn_id, started_at, ended_at, active_ms, state, tokens_used, input_tokens, context_tokens} | 工作块头。**active_ms=服务端权威工时，排除审批等待**，收口一次写定；tokens_used/input_tokens=输出/输入累计，context_tokens=最近一步 input（进度条口径）；前端历史耗时只取落盘值，禁止用当前时钟推算 |
 | approval | {request_id, tool, approved, time} | 审批留痕卡 + 刷新恢复弹窗 |
 | compaction | {summary_message_id, tokens_before, tokens_after} | "已压缩"提示 + resume 边界 |
 | context | {model, max_tokens, time} | 每 turn 上下文快照；系统提示词只影响其后轮次 |
@@ -97,20 +97,20 @@ backend/data/
   logs/               # app.log 滚动日志（5MB × 5 份）
 ```
 
-### 3.7 用量聚合（**设计稿，未实现**）
+### 3.7 用量聚合（已实现）
 
 > 目标：对齐 ZCode 的用量口径——输入/输出分开累计，真实 input 驱动 compact 预算与前端进度条。
 > 原则：**turn 事实为原子，会话聚合可重算**（沿用 tokens_used 的既有模式）；part 级不挂 token（一次调用的 usage 对应多个 part，无法自然归属，ZCode 亦然）；调用级明细仍只在 model-io JSONL（§3.0 分工不变）。
 
 | 改动点 | 内容 |
 |---|---|
-| turn 事实 | `session_entry(type=turn)` 的 data 增加 `input_tokens`；现有 `tokens_used`（输出累计）保留为兼容字段 |
-| session 表 | 增加 `input_tokens` 列（输出累计已有 `tokens_used`）；**不做迁移**——改表后删 `data/` 重建（产品决策 2026-09-28） |
-| 写入路径 | recorder 增加输入记账：usage 事件处累加 input；`end_turn` 事实带 input/output；同一处 `deps.last_input_tokens = input`——激活 compact 的"真实 usage 优先"（该字段当前无人赋值，实际永远走字符估算，是已知死路径） |
-| 重算 | `recalc_tokens_used` 扩展为同时重算 input_tokens（regenerate 回滚后修正，与输出同机制） |
-| 消费方 | ① compact 预算用真实 input 判定；② 前端 TokenBadge 改用"最近一次 input_tokens"为已用、`CONTEXT_WINDOW` 为上限（当前拿输出累计充当占用，口径失真）；③ GET /api/sessions 列表/详情透出 input |
+| turn 事实 | `session_entry(type=turn)` 的 data 增加 `input_tokens`（输入累计）与 `context_tokens`（本轮最后一步 input ≈ 当前上下文占用）；现有 `tokens_used`（输出累计）保留 |
+| session 表 | 增加 `input_tokens` 列（输出累计已有 `tokens_used`）；**不做迁移**——改表后删 `data/` 重建（产品决策 2026-09-28，实施时已执行） |
+| 写入路径 | recorder：`add_usage(input, output)` 取代原 `add_tokens`（input/output/最近一步 input 三本账）；`end_turn` 事实带全三级；主循环同时 `deps.last_input_tokens = input`——激活 compact 的"真实 usage 优先"（该字段此前无人赋值，永远字符估算）；子循环只记账不喂预算（口径属于主循环） |
+| 重算 | `recalc_tokens_used`（原孤儿函数，从未接线）重写为 `recalc_session_usage`：同时重算输出/输入两列；**接线到 regenerate**——修复被删轮 token 双算的潜伏 bug |
+| 消费方 | ① compact 预算用真实 input 判定；② 前端 TokenBadge 显示 `context_used / context_window · 百分比`（真实占用口径）；③ 列表 API 透出 `input_tokens`，详情另带 `context_used`/`context_window` |
 | 明确不做 | part 级 token 分摊；独立 usage 库（单体应用内聚同一 SQLite，ZCode 独立库源于其 CLI 进程与存储分离）；调用级明细落库（归 model-io JSONL） |
-| 验证 | 单测：turn 事实含 input/output、regenerate 重算一致性、compact 真实阈值生效、前端进度条口径 |
+| 验证 | pytest 70 passed（新增 test_usage_aggregation 2 例：turn 事实三级字段+双列、regenerate 重算；subtask 计入测试扩展 input 断言）；npm build 通过；浏览器实测徽标 `1.8k / 1.0M · 0%`（截图 tmp/gui-verify/v4-usage-badge.png） |
 
 **落点（无新表，仅两处）**：
 

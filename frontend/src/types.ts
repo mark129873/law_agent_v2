@@ -11,6 +11,7 @@ export interface SessionItem {
   created_at: number
   updated_at: number
   tokens_used: number
+  input_tokens: number // 输入 token 累计（用量聚合）
   running: boolean // 后台生成中 → 呼吸点
 }
 
@@ -81,6 +82,9 @@ export interface SessionDetail {
     created_at: number
     updated_at: number
     tokens_used: number
+    input_tokens: number // 输入 token 累计
+    context_used: number // 最近一轮"最后一步 input"≈当前上下文占用（进度条口径）
+    context_window: number // 上下文窗口大小（token）
   }
   turns: TurnData[]
   pending_approval: {
