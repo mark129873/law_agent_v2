@@ -79,7 +79,7 @@ FastAPI (uvicorn 127.0.0.1:8100, 无鉴权仅本机)
 | turn | {turn_id, started_at, ended_at, active_ms, state} | 工作块头。**active_ms=服务端权威工时，排除审批等待**，收口一次写定；前端历史耗时只取落盘值，禁止用当前时钟推算 |
 | approval | {request_id, tool, approved, time} | 审批留痕卡 + 刷新恢复弹窗 |
 | compaction | {summary_message_id, tokens_before, tokens_after} | "已压缩"提示 + resume 边界 |
-| context | {model, max_tokens, system_prompt_mtime} | 每 turn 上下文快照；系统提示词只影响其后轮次 |
+| context | {model, max_tokens, time} | 每 turn 上下文快照；系统提示词只影响其后轮次 |
 
 ### 3.5 回放与 resume
 

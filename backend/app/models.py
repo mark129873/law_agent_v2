@@ -106,7 +106,7 @@ class SessionEntry(Base):
     - turn:       {"turn_id","started_at","ended_at","active_ms","state"}  工作块数据源
     - approval:   {"request_id","tool","approved","time"}                  审批留痕
     - compaction: {"summary_message_id","tokens_before","tokens_after"}     压缩事实
-    - context:    {"model","max_tokens","system_prompt_mtime"}              每 turn 上下文快照
+    - context:    {"model","max_tokens","time"}                            每 turn 上下文快照
 
     turn_id 列：事实所属轮次的标签（重新生成回滚时按它删除该轮事实）。
     """
