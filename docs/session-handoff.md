@@ -7,6 +7,8 @@
   - 观测三层分工（ARCHITECTURE §3.0）：SQLite 会话事实（含 turn 级 input/output/context 三级 token 字段与会话双列累计）+ model-io JSONL（逐调用全量快照，`log/`）+ app.log 工程事件
   - compact 预算已激活真实 input（deps.last_input_tokens 由主循环 usage 事件喂入，原死路径）；前端 TokenBadge 显示真实上下文占用（context_used/context_window+百分比）
   - regenerate 回滚后由 recalc_session_usage 重算双列（修复被删轮 token 双算的潜伏 bug）
+  - **回放审批留痕去重**：同一 request_id 只渲染最终状态一张卡（修复回放出现"等待批准"幽灵卡，与实时流单卡翻转一致；DB 仍双写事实）
+  - **E2E 全量回归通过**：mock LLM（tmp/mock_llm_server.py，零成本）驱动真实前后端 17 项场景——流式/markdown/工具执行/任务板/subtask 双路径/审批批准+拒绝/错误重试/停止/409/刷新恢复/跨会话并行/删除/Enter 系/model-io/用量聚合，全部通过（截图 tmp/gui-verify/e2e-*.png）
   - 前端已有路由：`/` 欢迎页、`/session/:id` 会话视图；刷新/直链按地址恢复回放；未知与已删地址回首页，应用内新建的草稿留在空对话态
   - 三栏壳层对齐 ZCode 工作台语义：左栏头部按钮开合（localStorage 记忆 `ui.sidebar`），右栏 subtask 面板点卡打开/X 收起/再点恢复
   - 前端分包：markdown（react-markdown+highlight）在异步包，主包 284kB，无 Vite 告警

@@ -157,8 +157,13 @@ def load_replay(
                     {"kind": "error", "id": part.id, "message": data.get("message", ""), "time": item_time}
                 )
 
-    # 审批与压缩事实按 turn_id 归入工作块
+    # 审批与压缩事实按 turn_id 归入工作块。
+    # 审批同一 request_id 只保留最新一条事实（请求→决定是同一张卡的演进，
+    # 全量渲染会出现"等待批准"幽灵卡；未决判定也用同一份最新状态）
+    latest_by_request: dict[str, dict] = {}
     for data in approvals:
+        latest_by_request[data.get("request_id", "")] = data
+    for data in latest_by_request.values():
         bucket = turns.get(data.get("turn_id", ""))
         if bucket is not None:
             bucket["work_items"].append(
@@ -200,11 +205,7 @@ def load_replay(
         bucket["work_items"] = sorted(items, key=lambda x: x.get("time", 0))
         result_turns.append(bucket)
 
-    # 未决审批：同一 request_id 只看最新一条事实（时间升序遍历，后写覆盖），
-    # 最新状态仍是 requested 即为未决。
-    latest_by_request: dict[str, dict] = {}
-    for data in approvals:
-        latest_by_request[data.get("request_id", "")] = data
+    # 未决审批：用上面去重后的最新状态（仍是 requested 即未决）。
     pending = next(
         (a for a in latest_by_request.values() if a.get("status") == "requested"), None
     )

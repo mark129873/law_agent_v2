@@ -148,8 +148,11 @@ def test_replay_approval_trace_and_pending(store_db) -> None:
     })
     result2 = replay.load_replay(d, "s1")
     assert result2["pending_approval"] is None
+    # 同一 request_id 去重：回放只渲染最终状态一张卡。
+    # （语义修正：实时流里请求→决定是同一张卡翻转，回放若全量渲染会出现
+    #   "等待批准"幽灵卡，两态不一致；DB 仍两条事实都存，仅渲染层去重）
     statuses = [x["status"] for x in result2["turns"][0]["work_items"] if x["kind"] == "approval"]
-    assert statuses == ["requested", "approved"]  # 两次都留痕
+    assert statuses == ["approved"]
 
 
 def test_replay_deleted_session_invisible(store_db) -> None:

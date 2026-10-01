@@ -118,6 +118,7 @@
 - 下一步最佳动作：真实使用打磨；可选——把 loop.py usage 事件的 input_tokens 喂给 deps.last_input_tokens 激活 compact"真实 usage 优先"（当前该字段无人赋值，永远字符估算）
 - 追加（同日）：存储三分工（SQLite 事实 / model-io JSONL / app.log）写入 ARCHITECTURE §3.0；用量聚合设计稿落 ARCHITECTURE §3.7
 - 追加（同日，实施）：**用量聚合已实现**（§3.7 转已实现）——turn 事实 +input_tokens/context_tokens、session +input_tokens 列（已删库重建）、recorder.add_usage 取代 add_tokens、主循环喂 last_input_tokens 激活 compact 真实预算、**顺带修复潜伏 bug**（recalc_tokens_used 原是孤儿函数从未接线，regenerate 被删轮 token 双算；重写为 recalc_session_usage 并接线）、TokenBadge 改真实占用口径；pytest **70 passed**（+test_usage_aggregation 2 例，subtask 计入扩断言）、npm build 通过、浏览器实测徽标 1.8k/1.0M·0%（截图 v4-usage-badge.png）；feature_list +BE-013 passing
+- 追加（同日，E2E 全量回归）：**mock LLM 服务**（tmp/mock_llm_server.py，本地 Anthropic 兼容 SSE，零成本全链路）驱动真实前后端跑完 **17 项 E2E**：流式/markdown 渲染、工具真实执行+二级折叠、任务板、subtask 实时面板（含失败注入与错误喂回）、审批批准+**拒绝**双路径（拒绝后文件未删）、错误卡+重试、停止保留部分输出、同会话 409、生成中刷新恢复、跨会话并行、删除会话、Enter/Shift+Enter、复制按钮、model-io 逐调用落库（子代理带 subtask_id、错误行）、用量聚合数值与 mock 脚本吻合。**新发现并修复 1 个缺陷**：回放审批留痕双卡（requested+denied 两条事实各渲染一张，出现"等待批准"幽灵卡）——replay 按 request_id 去重渲染最终状态，与实时流"单卡翻转"一致；DB 仍双写事实，测试语义同步修正并注明理由。E2E 截图 tmp/gui-verify/e2e-*.png
 
 
 
