@@ -13,6 +13,8 @@ from pathlib import Path
 # 必须在导入 app.* 之前设置环境变量（config.py 在 import 时读取）
 _TEST_DATA_DIR = Path(__file__).resolve().parent / ".tmp-data"
 os.environ["DATA_DIR"] = str(_TEST_DATA_DIR)
+# model-io JSONL 同样指进测试沙箱（真实 log/ 绝不被测试触碰），随 fixture 一并清理
+os.environ["MODELIO_DIR"] = str(_TEST_DATA_DIR / "modelio")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

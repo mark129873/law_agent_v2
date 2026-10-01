@@ -33,3 +33,6 @@ frontend/dist/
 
 # ZCode 会话产物
 .zcode/
+
+# model-io JSONL（逐次 LLM 调用快照，含对话正文，绝不入库）
+/log/

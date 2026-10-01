@@ -1,9 +1,9 @@
-"""日志与观测初始化模块。
+"""日志初始化模块。
 
-设计（docs/RELIABILITY.md）：
+设计（docs/RELIABILITY.md §1）：
 - logging 双通道：控制台（人读）+ 滚动文件 data/logs/app.log；
 - 只记工程事件（turn 生命周期/工具/审批/压缩/错误），不记对话正文；
-- Langfuse 在 BE-10 接入，本模块预留 langfuse_enabled 判断位置。
+- LLM 逐调用快照由 app/modelio.py 负责（model-io JSONL，与本项目解耦）。
 """
 
 import logging
@@ -71,71 +71,3 @@ def shutdown_logging() -> None:
         except Exception:  # 清理失败不抛出，避免掩盖测试本身的错误
             pass
         root.removeHandler(handler)
-
-
-# ---------- Langfuse（BE-10：与 logging 分工——这里记 LLM 交互细节，logging 记工程事件） ----------
-
-_langfuse_client = None  # 进程内共享；未启用时为 None
-
-
-def init_langfuse(settings) -> None:
-    """按配置初始化 Langfuse；默认关闭，开启后失败也不影响主流程。"""
-    global _langfuse_client
-    if not getattr(settings, "langfuse_enabled", False):
-        logger.info("Langfuse 未启用（LANGFUSE_ENABLED=false）")
-        return
-    try:
-        from langfuse import Langfuse
-
-        kwargs = {
-            "public_key": settings.langfuse_public_key,
-            "secret_key": settings.langfuse_secret_key,
-        }
-        if settings.langfuse_base_url:
-            kwargs["host"] = settings.langfuse_base_url
-        _langfuse_client = Langfuse(**kwargs)
-        logger.info("Langfuse 已启用 host=%s", settings.langfuse_base_url or "(默认云版)")
-    except Exception as exc:  # 初始化失败：降级为不观测，绝不阻断启动
-        logger.warning("Langfuse 初始化失败（不影响主流程）：%s", exc)
-        _langfuse_client = None
-
-
-def record_llm_call(
-    session_id: str,
-    turn_id: str,
-    model: str,
-    system: str,
-    messages: list,
-    output_text: str,
-    usage: dict,
-    subtask_id: str | None = None,
-) -> None:
-    """上报一次 LLM 调用（trace=session，generation 带 turn 元数据）。
-
-    双系统不重复的边界：这里记 prompt/messages/completion 全文，
-    logging 里只记"发生了一次调用"的工程事实。
-    subtask_id：subtask 子循环的调用传入，用于在观测里与主循环调用区分。
-    任何失败都吞掉并记 WARNING——观测永远不能挡住对话主流程。
-    """
-    if _langfuse_client is None:
-        return
-    try:
-        trace = _langfuse_client.trace(id=session_id, name="session", session_id=session_id)
-        metadata: dict = {"turn_id": turn_id}
-        if subtask_id:
-            metadata["subtask_id"] = subtask_id
-        trace.generation(
-            name="llm-call",
-            model=model,
-            metadata=metadata,
-            input={"system": system, "messages": messages},
-            output=output_text,
-            usage={
-                "input": usage.get("input_tokens", 0),
-                "output": usage.get("output_tokens", 0),
-                "unit": "TOKENS",
-            },
-        )
-        _langfuse_client.flush()
-    except Exception as exc:
-        logger.warning("Langfuse 上报失败（忽略）：%s", exc)

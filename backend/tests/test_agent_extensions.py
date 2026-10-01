@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -16,7 +17,7 @@ from app.sessions.recorder import TurnRecorder
 class ScriptClient:
     """按调用次序出脚本的假流式客户端（主循环与子循环共用一个客户端）。"""
 
-    model = "test-model"  # Langfuse 上报取用的模型名
+    model = "test-model"  # model-io 记录取用的模型名
 
     def __init__(self, scripts: list[list[dict]]) -> None:
         self.scripts = list(scripts)
@@ -219,30 +220,10 @@ def test_subtask_missing_goal(recorder) -> None:
     assert done["status"] == "failed"
 
 
-def test_subtask_tokens_counted(recorder, monkeypatch) -> None:
-    """子循环 usage 与主循环同口径：token_count 事件 + 会话 tokens_used 累计 + Langfuse 带 subtask_id。"""
+def test_subtask_tokens_counted(recorder) -> None:
+    """子循环 usage 与主循环同口径：token_count 事件 + 会话 tokens_used 累计 + model-io 带 subtask_id。"""
+    from app.config import settings
     from app.models import Session
-
-    # Langfuse 桩（复用 test_obs 的桩形态）记录全部 generation
-    class StubLangfuse:
-        def __init__(self) -> None:
-            self.generations: list[dict] = []
-
-        def trace(self, **kwargs):
-            class Trace:
-                def __init__(self, outer):
-                    self.outer = outer
-
-                def generation(self, **gen):
-                    self.outer.generations.append(gen)
-
-            return Trace(self)
-
-        def flush(self) -> None:
-            pass
-
-    stub = StubLangfuse()
-    monkeypatch.setattr("app.obs._langfuse_client", stub)
 
     client = ScriptClient([
         # 主循环第 1 步：派子助手（该步本身无 usage）
@@ -267,13 +248,15 @@ def test_subtask_tokens_counted(recorder, monkeypatch) -> None:
     row = deps.recorder.db.get(Session, "s1")
     assert row.tokens_used == 55
 
-    # 3) Langfuse：三步调用都有上报；子循环那次 metadata 带 subtask_id 且 usage 正确
-    assert len(stub.generations) == 3
-    sub_gen = next(g for g in stub.generations if "subtask_id" in g["metadata"])
-    assert sub_gen["output"] == "子助手结果"
-    assert sub_gen["usage"] == {"input": 100, "output": 50, "unit": "TOKENS"}
-    # 主循环调用不带 subtask_id；全部调用同一 turn_id
-    main_gens = [g for g in stub.generations if "subtask_id" not in g["metadata"]]
-    assert len(main_gens) == 2
-    turn_ids = {g["metadata"]["turn_id"] for g in stub.generations}
-    assert len(turn_ids) == 1
+    # 3) model-io JSONL：三步都有记录；子循环那次带 subtask_id 且 usage 正确，
+    #    主循环调用不带 subtask_id；全部调用同一 turn_id
+    path = Path(settings.modelio_dir) / "model-io-s1.jsonl"
+    records = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(records) == 3
+    sub_recs = [r for r in records if r["subtask_id"]]
+    assert len(sub_recs) == 1
+    assert sub_recs[0]["response"]["text"] == "子助手结果"
+    assert sub_recs[0]["usage"] == {"input_tokens": 100, "output_tokens": 50}
+    main_recs = [r for r in records if not r["subtask_id"]]
+    assert len(main_recs) == 2
+    assert len({r["turn_id"] for r in records}) == 1

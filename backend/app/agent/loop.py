@@ -23,7 +23,7 @@ from typing import AsyncIterator, Callable
 
 from app.agent import hooks, permissions
 from app.agent.tools import TOOLS, execute_tool
-from app.obs import record_llm_call
+from app.modelio import record_llm_call
 from app.sessions.recorder import TurnRecorder
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,8 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
             tool_uses: list[dict] = []
             step_usage = {"input_tokens": 0, "output_tokens": 0}
             messages_snapshot = [dict(m) for m in deps.history]  # 观测上报用的调用时快照
+            step_started = time.monotonic()  # LLM 调用耗时（model-io 记录用）
+            llm_error: str | None = None  # 非 None = 该次调用失败（model-io 记录用）
             try:
                 async for event in deps.client.stream(
                     system=deps.system_prompt, messages=deps.history, tools=deps.tools
@@ -169,16 +171,26 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                         }
             except Exception as exc:  # LLM 层异常：转 error 事件，failed 收口
                 logger.exception("LLM 调用失败")
+                llm_error = str(exc)  # 记入 model-io（该次调用失败）
                 deps.recorder.write_error_part(message_id, str(exc))
                 yield {"type": "error", "message": str(exc)}
                 state = "failed"
                 break
             finally:
-                # Langfuse：上报本步 LLM 交互细节（未启用时为空操作）
+                # model-io：逐调用快照落 JSONL（成功与失败都记；失败不影响主流程）
                 record_llm_call(
                     deps.recorder.session_id, turn_id,
                     getattr(deps.client, "model", "unknown"),
-                    deps.system_prompt, messages_snapshot, text_acc, step_usage,
+                    deps.system_prompt, messages_snapshot,
+                    response_text=text_acc,
+                    tool_calls=[
+                        {"id": t["id"], "name": t["name"], "input": t.get("input") or {}}
+                        for t in tool_uses
+                    ],
+                    usage=step_usage,
+                    duration_ms=(time.monotonic() - step_started) * 1000,
+                    tool_names=[t["name"] for t in deps.tools],
+                    error=llm_error,
                 )
 
             # ---- 里程碑落盘：正文与工具调用（pending 态） ----

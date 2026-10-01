@@ -92,7 +92,7 @@ backend/data/
 一个 turn = 一次 `run_turn()`（上限 40 步安全阀）：
 
 ```
-用户输入 → 压缩检查 → LLM 流式调用（text delta 实时推 SSE；usage → add_tokens/token_count/Langfuse）
+用户输入 → 压缩检查 → LLM 流式调用（text delta 实时推 SSE；usage → add_tokens/token_count/model-io JSONL）
    ├─ 无 tool_use → Stop hook 无注入则收口（有注入则续轮）
    └─ 有 tool_use → 权限闸门 →（高危）审批挂起·active_ms 记账暂停 → 线程池执行(PowerShell) → tool_result 回填续轮
 ```
@@ -120,7 +120,7 @@ backend/data/
 
 - 全新历史跑 **30 轮独立循环**，仅基础工具（无 subtask 防递归）；最终文本作 tool_result 返回父级。
 - subtask_started/delta/completed 事件直推队列，右侧面板实时累积；落盘只留"目标+状态+最终输出"一张卡（子循环内部步骤不落库）。
-- **token 口径与主循环一致**：usage → add_tokens 计入会话、发 token_count、Langfuse 上报带 subtask_id。
+- **token 口径与主循环一致**：usage → add_tokens 计入会话、发 token_count、写入 model-io JSONL（带 subtask_id）。
 - deny-list 仍生效；高危自动放行（子助手是父任务委派的执行细节，无交互审批）。
 
 ### 4.4 Turn 管理（`turn_manager.py`）
@@ -211,5 +211,5 @@ frontend/src/
 
 | 系统 | 记什么 | 不记什么 | 组织与降级 |
 |---|---|---|---|
-| logging（obs.py，默认开） | 工程事件：turn 生命周期、工具调用与耗时、审批请求与决定、压缩发生、错误堆栈 | prompt 与回复正文（属 DB 与 Langfuse 职责） | 控制台 + `data/logs/app.log` 滚动（5MB×5）；ERROR=需人处理 / WARNING=可自动恢复 / INFO=生命周期 / DEBUG=默认关 |
-| Langfuse（默认关） | LLM 交互细节：system prompt、messages、completion、token 用量、模型名、耗时 | 工程事件（与 logging 分工） | trace=session_id；generation 带 turn_id（subtask 另带 subtask_id）；初始化/上报全吞异常记 WARNING，不可用不影响主流程；关闭=零开销 |
+| logging（obs.py，默认开） | 工程事件：turn 生命周期、工具调用与耗时、审批请求与决定、压缩发生、错误堆栈 | prompt 与回复正文（属 DB 与 model-io JSONL 职责） | 控制台 + `data/logs/app.log` 滚动（5MB×5）；ERROR=需人处理 / WARNING=可自动恢复 / INFO=生命周期 / DEBUG=默认关 |
+| model-io JSONL（modelio.py，默认开） | **逐次 LLM 调用**的完整快照：system prompt、messages、tool 名称、response 文本与 tool_calls、input/output tokens、耗时、错误 | 工程事件（与 logging 分工） | 每会话一个文件 `log/model-io-<session_id>.jsonl`，逐行 JSON 追加（ZCode 同思想）；每会话可独立配置 `MODELIO_DIR`（测试指向 .tmp-data）；写入失败吞异常记 WARNING，不影响主流程；子循环调用同样记录并带 subtask_id |

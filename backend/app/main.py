@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from app import db
 from app.api import sessions as sessions_api
 from app.config import settings
-from app.obs import init_langfuse, setup_logging
+from app.obs import setup_logging
 
 
 @asynccontextmanager
@@ -28,8 +28,6 @@ async def lifespan(app: FastAPI):
     from app.agent import hooks
 
     hooks.register_default_hooks()
-    # Langfuse 观测（默认关闭；失败不影响启动）
-    init_langfuse(settings)
 
     import logging
 

@@ -6,7 +6,7 @@
 - Web 版差异：子循环的文本增量实时以 subtask_delta 事件推给前端右侧面板；
   落盘只保留"目标+状态+最终输出"一张 subtask 卡（子循环内部步骤不落库）；
 - token 口径：子循环每次调用的 usage 与主循环同口径处理——累计进会话
-  tokens_used、发 token_count 事件、上报 Langfuse（metadata 带 subtask_id）。
+  tokens_used、发 token_count 事件、写入 model-io JSONL（带 subtask_id）。
 
 权限差异：子助手中 deny-list 仍然生效（返回 Error 字符串），高危操作
 自动放行（交互审批只存在于主循环——子助手是父任务委派的执行细节）。
@@ -14,10 +14,11 @@
 
 import asyncio
 import logging
+import time
 
 from app.agent import permissions
 from app.agent.tools import TOOL_HANDLERS, TOOLS, execute_tool
-from app.obs import record_llm_call
+from app.modelio import record_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,9 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
             text_acc = ""
             tool_uses: list[dict] = []
             step_usage: dict = {"input_tokens": 0, "output_tokens": 0}
-            child_snapshot = [dict(m) for m in child_history]  # Langfuse 上报用的调用时快照
+            child_snapshot = [dict(m) for m in child_history]  # 观测上报用的调用时快照
+            step_started = time.monotonic()  # LLM 调用耗时（model-io 记录用）
+            llm_error: str | None = None  # 非 None = 该次调用失败（model-io 记录用）
             try:
                 async for event in deps.client.stream(
                     system=SUBTASK_SYSTEM_PROMPT, messages=child_history, tools=SUBTASK_TOOLS
@@ -82,13 +85,25 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                         }
                         deps.recorder.add_tokens(step_usage["output_tokens"])
                         yield {"type": "token_count", **step_usage}
+            except Exception as exc:
+                llm_error = str(exc)  # 记入 model-io（该次调用失败），再交给外层统一处理
+                raise
             finally:
-                # Langfuse：子循环调用也上报交互细节，metadata 带 subtask_id 区分
+                # model-io：子循环调用也逐次落 JSONL，metadata 带 subtask_id
                 record_llm_call(
                     deps.recorder.session_id, deps.recorder.turn_id,
                     getattr(deps.client, "model", "unknown"),
-                    SUBTASK_SYSTEM_PROMPT, child_snapshot, text_acc, step_usage,
+                    SUBTASK_SYSTEM_PROMPT, child_snapshot,
+                    response_text=text_acc,
+                    tool_calls=[
+                        {"id": t["id"], "name": t["name"], "input": t.get("input") or {}}
+                        for t in tool_uses
+                    ],
+                    usage=step_usage,
+                    duration_ms=(time.monotonic() - step_started) * 1000,
+                    tool_names=[t["name"] for t in SUBTASK_TOOLS],
                     subtask_id=subtask_id,
+                    error=llm_error,
                 )
 
             if text_acc:

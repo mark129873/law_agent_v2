@@ -16,18 +16,18 @@
 | INFO | 生命周期事件 | turn 开始/收口（turn_id+工时）、工具调用与耗时、审批请求与结果、压缩发生 |
 | DEBUG | 开发期细节 | **默认关闭** |
 
-- 记录内容：工程事件 + id；**不记录**用户输入与模型回复正文（正文属于数据库与 Langfuse 的职责，双系统不重复）。
+- 记录内容：工程事件 + id；**不记录**用户输入与模型回复正文（正文属于数据库与 model-io JSONL 的职责，双系统不重复）。
 - httpx / anthropic 等三方库降噪至 WARNING。
 
-## 2. Langfuse 链路追踪
+## 2. model-io JSONL（逐调用 LLM 快照）
 
 | 项 | 约定 |
 |---|---|
-| 开关 | `LANGFUSE_ENABLED` 默认 **false**；关闭时零开销（不初始化 SDK、不发网络请求） |
-| 配置 | `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`（见 `backend/.env.example`） |
-| 记录 | LLM 交互细节：system prompt、messages、completion、token 用量、模型名、耗时 |
-| 组织 | trace=session_id；generation 带 turn_id（subtask 子循环另带 subtask_id） |
-| 失败语义 | 初始化与上报全部吞异常并记 WARNING，**不可用不得影响对话主流程** |
+| 位置 | 项目根 `log/model-io-<session_id>.jsonl`（不入库；`MODELIO_DIR` 可覆盖，测试指向 `.tmp-data/`） |
+| 粒度 | **一次 LLM 调用一行 JSON**（追加写）：完整 system prompt、messages 快照、tool 名称、response 文本与 tool_calls、input/output tokens、耗时、错误 |
+| 范围 | 主循环与 subtask 子循环都记（子循环行带 subtask_id） |
+| 失败语义 | 写入失败吞异常记 WARNING，**永不影响对话主流程** |
+| 纪律 | 该目录属运行时产物，绝不提交；含对话正文，勿外传 |
 
 ## 3. 测试干净环境管理
 
@@ -35,7 +35,7 @@
 
 | 场景 | 纪律 |
 |---|---|
-| pytest | 数据目录经 `DATA_DIR` 环境变量注入（conftest 在导入 app 前设置），指向 `backend/tests/.tmp-data/`；**每个测试前清空重建，测试后必须删除**（teardown） |
+| pytest | 数据目录经 `DATA_DIR` 环境变量注入（conftest 在导入 app 前设置），指向 `backend/tests/.tmp-data/`；model-io 目录同理经 `MODELIO_DIR` 注入；**每个测试前清空重建，测试后必须删除**（teardown） |
 | 浏览器手测 / E2E | 启动真实后端前先清空 `backend/data/`（生产语义即"改表/发版 = 清库重建"，产品决策 2026-09-28：不做 schema 迁移） |
 | 测试后核对 | `.tmp-data/` 已删除（Windows 文件锁时先释放 SQLite/日志句柄）；真实 `backend/data/` 未被测试触碰 |
 

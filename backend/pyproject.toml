@@ -14,7 +14,6 @@ dependencies = [
     # .env 配置加载（与 mini_harness 一致的做法）
     "python-dotenv>=1.0",
     # 链路追踪（默认关闭，LANGFUSE_ENABLED 控制）
-    "langfuse>=2.0",
 ]
 
 [dependency-groups]

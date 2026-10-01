@@ -65,11 +65,8 @@ class Settings:
     # --- 日志 ---
     log_level: str = "INFO"
 
-    # --- Langfuse（默认关闭） ---
-    langfuse_enabled: bool = False
-    langfuse_base_url: str = ""
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
+    # --- model-io JSONL（逐调用 LLM 快照，ZCode 同思想；默认项目根 log/） ---
+    modelio_dir: Path = field(default_factory=lambda: BACKEND_ROOT.parent / "log")
 
 
 def load_settings() -> Settings:
@@ -78,6 +75,11 @@ def load_settings() -> Settings:
     # 相对路径一律基于 backend/ 解析，避免受进程启动目录影响
     if not data_dir.is_absolute():
         data_dir = BACKEND_ROOT / data_dir
+
+    # model-io 目录：默认项目根 log/（BACKEND_ROOT.parent）；相对路径同 data_dir 基于 backend/ 解析
+    modelio_dir = Path(_env_str("MODELIO_DIR", str(BACKEND_ROOT.parent / "log")))
+    if not modelio_dir.is_absolute():
+        modelio_dir = BACKEND_ROOT / modelio_dir
 
     return Settings(
         anthropic_api_key=_env_str("ANTHROPIC_API_KEY"),
@@ -93,10 +95,7 @@ def load_settings() -> Settings:
         port=_env_int("PORT", 8000),
         data_dir=data_dir,
         log_level=_env_str("LOG_LEVEL", "INFO").upper(),
-        langfuse_enabled=_env_bool("LANGFUSE_ENABLED", False),
-        langfuse_base_url=_env_str("LANGFUSE_BASE_URL"),
-        langfuse_public_key=_env_str("LANGFUSE_PUBLIC_KEY"),
-        langfuse_secret_key=_env_str("LANGFUSE_SECRET_KEY"),
+        modelio_dir=modelio_dir,
     )
 
 

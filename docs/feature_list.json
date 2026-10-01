@@ -91,9 +91,17 @@
       "id": "BE-010",
       "name": "观测补全(Langfuse)",
       "description": "关键链路日志补全(turn生命周期/工具/审批/压缩)、Langfuse SDK 集成(LANGFUSE_ENABLED 默认 false,trace=session/span=turn,失败不影响主流程,与 logging 不重复)",
+      "status": "deprecated",
+      "evidence": "2026-10-01 产品决策：删除 Langfuse（单用户本地项目不值得自部署外部观测服务），改为本地 model-io JSONL 逐调用记录，见 BE-012；logging 工程事件部分保留",
+      "testedAt": "2026-10-01"
+    },
+    {
+      "id": "BE-012",
+      "name": "model-io JSONL 逐调用记录",
+      "description": "ZCode 同思想：每次 LLM 调用（主循环+subtask）逐行追加到 log/model-io-<session_id>.jsonl——完整 system prompt、messages 快照、tool 名称、response 文本与 tool_calls、input/output tokens、耗时、错误；MODELIO_DIR 可注入",
       "status": "passing",
-      "evidence": "uv run pytest 69 passed：默认关闭不构造客户端/开启用 host+keys 构造/初始化失败降级为 None/上报 payload(trace=session,generation 带 turn_id+messages+output+token 用量)/上报异常吞掉不挡主流程/端到端跑 turn 收到该步调用；turn 生命周期与工具/审批/压缩工程事件日志已接",
-      "testedAt": "2026-09-27"
+      "evidence": "pytest 68 passed：新增 3 例(成功调用全字段含 system/messages/tool_names/response/usage/duration_ms、tool_calls 步记录 id/name/input、失败调用 error 字段+failed 收口)；subtask 计入测试改走 JSONL 断言(subtask_id/usage/三行同 turn_id)；真实清库启动 health 正常无 langfuse 残留；uv remove langfuse 依赖移除",
+      "testedAt": "2026-10-01"
     },
     {
       "id": "FE-001",
