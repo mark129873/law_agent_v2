@@ -112,6 +112,15 @@ backend/data/
 | 明确不做 | part 级 token 分摊；独立 usage 库（单体应用内聚同一 SQLite，ZCode 独立库源于其 CLI 进程与存储分离）；调用级明细落库（归 model-io JSONL） |
 | 验证 | 单测：turn 事实含 input/output、regenerate 重算一致性、compact 真实阈值生效、前端进度条口径 |
 
+**落点（无新表，仅两处）**：
+
+| 位置 | 改动 | 读写者 |
+|---|---|---|
+| `session` 表（models.Session） | +1 列：`input_tokens: Integer, default 0`，与既有 `tokens_used`（输出累计）并排 | 写：`recorder.end_turn` 累加 / regenerate 后 `recalc_tokens_used` 重算；读：列表与详情 API、前端进度条 |
+| `session_entry` 表 **结构不动**（data 本就是 JSON 列） | `type='turn'` 行的 data +1 键：`"input_tokens": N`，`"tokens_used"` 保留为输出 | 写：`end_turn` 一次性写定（事实不可变）；读：回放/审计 |
+
+> 顺带收益：turn 事实走 JSON 列——将来若某端点返回 cache 计量（`cache_read`/`cache_creation`），在 data 里加键即可，零迁移；只有 session 表加列才涉及"删库重建"。
+
 ## 4. Agent 核心（mini_harness 移植 + 流式 + 可中断）
 
 一个 turn = 一次 `run_turn()`（上限 40 步安全阀）：
