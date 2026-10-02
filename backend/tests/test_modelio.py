@@ -74,7 +74,11 @@ def test_model_io_record_payload(recorder) -> None:
     # 响应与用量
     assert rec["response"]["text"] == "回答"
     assert rec["response"]["tool_calls"] == []
-    assert rec["usage"] == {"input_tokens": 9, "output_tokens": 3}
+    # 假客户端未带 cache 字段 → 记 0（端点支持 prompt caching 时才非零）
+    assert rec["usage"] == {
+        "input_tokens": 9, "output_tokens": 3,
+        "cache_read_tokens": 0, "cache_creation_tokens": 0,
+    }
 
 
 def test_model_io_records_tool_calls(recorder) -> None:
@@ -124,3 +128,20 @@ def test_model_io_records_error(recorder) -> None:
     assert events[-1]["state"] == "failed"
     rec = _read_model_io()[0]
     assert rec["error"] and "网络断了" in rec["error"]
+
+
+def test_model_io_rotation(monkeypatch, tmp_data_dir) -> None:
+    """大小轮转：文件超限时改名归档、新调用写新文件，记录零丢失。"""
+    from app.modelio import record_llm_call
+
+    monkeypatch.setattr(settings, "modelio_max_bytes", 1)  # 阈值压到 1 字节：每写必轮转
+    for i in range(3):
+        record_llm_call(
+            session_id="srot", turn_id="t", model="m", system="s", messages=[],
+            response_text=f"x{i}", tool_calls=[],
+            usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=1,
+        )
+    files = sorted(Path(settings.modelio_dir).glob("model-io-srot*.jsonl"))
+    assert len(files) >= 2  # 至少发生一次轮转（当前文件 + 归档文件）
+    total = sum(len(f.read_text(encoding="utf-8").splitlines()) for f in files)
+    assert total == 3  # 三条记录一条不丢

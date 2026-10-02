@@ -47,15 +47,22 @@ class AnthropicStreamClient:
         ) as stream:
             tool_meta: dict[int, dict] = {}  # 块索引 -> {id,name}
             json_fragments: dict[int, str] = {}  # 块索引 -> 攒参数 JSON 分片
-            usage = {"input_tokens": 0, "output_tokens": 0}
+            usage = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,  # 命中缓存的输入 token（端点支持才有值）
+                "cache_creation_tokens": 0,  # 写入缓存的输入 token
+            }
 
             async for event in stream:
                 etype = event.type
                 if etype == "message_start":
-                    # 输入 token 在消息开始时给出
+                    # 输入 token（含缓存读写计量）在消息开始时给出
                     msg_usage = getattr(event.message, "usage", None)
                     if msg_usage is not None:
                         usage["input_tokens"] = getattr(msg_usage, "input_tokens", 0) or 0
+                        usage["cache_read_tokens"] = getattr(msg_usage, "cache_read_input_tokens", 0) or 0
+                        usage["cache_creation_tokens"] = getattr(msg_usage, "cache_creation_input_tokens", 0) or 0
                 elif etype == "content_block_start":
                     block = event.content_block
                     if getattr(block, "type", "") == "tool_use":
@@ -96,6 +103,8 @@ class AnthropicStreamClient:
                 "type": "usage",
                 "input_tokens": usage["input_tokens"],
                 "output_tokens": usage["output_tokens"],
+                "cache_read_tokens": usage["cache_read_tokens"],
+                "cache_creation_tokens": usage["cache_creation_tokens"],
             }
 
 

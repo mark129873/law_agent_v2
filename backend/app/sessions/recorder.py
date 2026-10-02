@@ -23,6 +23,8 @@ class TurnRecorder:
         self._paused_ms: float = 0.0
         self.tokens_used = 0  # 本轮输出 token 累计
         self.tokens_input = 0  # 本轮输入 token 累计（用量聚合）
+        self.cache_read_tokens = 0  # 本轮命中缓存的输入累计（端点支持才有值）
+        self.cache_creation_tokens = 0  # 本轮写缓存的输入累计
         self._last_input = 0  # 最近一步的 input（≈当前上下文占用，进度条口径）
         # 本轮用户消息的 sequence（compact 边界：在此之前的历史才可被摘要）
         self.first_user_sequence = 0
@@ -32,10 +34,15 @@ class TurnRecorder:
         """turn 开始时间（事件用，避免外部摸私有字段）。"""
         return self._started_at
 
-    def add_usage(self, input_tokens: int, output_tokens: int) -> None:
-        """累计本次 turn 的 token 用量（usage 事件驱动，输入输出分开记账）。"""
+    def add_usage(
+        self, input_tokens: int, output_tokens: int,
+        cache_read_tokens: int = 0, cache_creation_tokens: int = 0,
+    ) -> None:
+        """累计本次 turn 的 token 用量（usage 事件驱动，输入/输出/缓存分开记账）。"""
         self.tokens_used += output_tokens
         self.tokens_input += input_tokens
+        self.cache_read_tokens += cache_read_tokens
+        self.cache_creation_tokens += cache_creation_tokens
         self._last_input = input_tokens
 
     # ---------- 生命周期 ----------
@@ -96,6 +103,8 @@ class TurnRecorder:
             "tokens_used": self.tokens_used,
             "input_tokens": self.tokens_input,
             "context_tokens": self._last_input,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
         }
         store.put_entry(self.db, self.session_id, "turn", fact, turn_id=self.turn_id)
         # 会话累计 token：直接累加（重新生成时会由 recalc 重算修正）

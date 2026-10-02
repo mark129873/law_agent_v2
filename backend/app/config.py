@@ -67,6 +67,7 @@ class Settings:
 
     # --- model-io JSONL（逐调用 LLM 快照，ZCode 同思想；默认项目根 log/） ---
     modelio_dir: Path = field(default_factory=lambda: BACKEND_ROOT.parent / "log")
+    modelio_max_bytes: int = 10 * 1024 * 1024  # 单文件超过此大小轮转（默认 10MB），防无限增长
 
 
 def load_settings() -> Settings:
@@ -96,6 +97,7 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         log_level=_env_str("LOG_LEVEL", "INFO").upper(),
         modelio_dir=modelio_dir,
+        modelio_max_bytes=_env_int("MODELIO_MAX_MB", 10) * 1024 * 1024,
     )
 
 

@@ -261,7 +261,10 @@ def test_subtask_tokens_counted(recorder) -> None:
     sub_recs = [r for r in records if r["subtask_id"]]
     assert len(sub_recs) == 1
     assert sub_recs[0]["response"]["text"] == "子助手结果"
-    assert sub_recs[0]["usage"] == {"input_tokens": 100, "output_tokens": 50}
+    assert sub_recs[0]["usage"] == {
+        "input_tokens": 100, "output_tokens": 50,
+        "cache_read_tokens": 0, "cache_creation_tokens": 0,
+    }
     main_recs = [r for r in records if not r["subtask_id"]]
     assert len(main_recs) == 2
     assert len({r["turn_id"] for r in records}) == 1

@@ -162,9 +162,13 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                         step_usage = {
                             "input_tokens": event.get("input_tokens", 0),
                             "output_tokens": event.get("output_tokens", 0),
+                            "cache_read_tokens": event.get("cache_read_tokens", 0),
+                            "cache_creation_tokens": event.get("cache_creation_tokens", 0),
                         }
                         deps.recorder.add_usage(
-                            step_usage["input_tokens"], step_usage["output_tokens"]
+                            step_usage["input_tokens"], step_usage["output_tokens"],
+                            cache_read_tokens=step_usage["cache_read_tokens"],
+                            cache_creation_tokens=step_usage["cache_creation_tokens"],
                         )
                         # 真实 input 喂给 compact 预算（此前该字段无人赋值，只能字符估算）
                         deps.last_input_tokens = step_usage["input_tokens"]

@@ -76,7 +76,7 @@ FastAPI (uvicorn 127.0.0.1:8100, 无鉴权仅本机)
 
 | type | data | 消费方 |
 |---|---|---|
-| turn | {turn_id, started_at, ended_at, active_ms, state, tokens_used, input_tokens, context_tokens} | 工作块头。**active_ms=服务端权威工时，排除审批等待**，收口一次写定；tokens_used/input_tokens=输出/输入累计，context_tokens=最近一步 input（进度条口径）；前端历史耗时只取落盘值，禁止用当前时钟推算 |
+| turn | {turn_id, started_at, ended_at, active_ms, state, tokens_used, input_tokens, context_tokens, cache_read_tokens, cache_creation_tokens} | 工作块头。**active_ms=服务端权威工时，排除审批等待**，收口一次写定；tokens_used/input_tokens=输出/输入累计，context_tokens=最近一步 input（进度条口径），cache_*=缓存读写计量（端点支持才有值）；前端历史耗时只取落盘值，禁止用当前时钟推算 |
 | approval | {request_id, tool, approved, time} | 审批留痕卡 + 刷新恢复弹窗 |
 | compaction | {summary_message_id, tokens_before, tokens_after} | "已压缩"提示 + resume 边界 |
 | context | {model, max_tokens, time} | 每 turn 上下文快照；系统提示词只影响其后轮次 |
@@ -221,7 +221,7 @@ frontend/src/
 |---|---|
 | 路由 | `/` 欢迎页；`/session/:sessionId` 会话视图（SessionView 以 `key=sessionId` 重挂载隔离切换）。详情 404 分流：本应用创建的草稿（draftIdsRef）→ 留空对话态；未知/已删 → 回首页（draft 集合随刷新清空） |
 | 壳层 | 左栏头部按钮开合（localStorage 记忆，收起宽度归零、瞬时切换）；右栏点 subtask 卡打开 / X 收起 / 再点恢复 |
-| TurnGroup 状态机 | running=「工作中 {耗时}」每秒 tick（仅 running 允许用当前时钟）；completed=「已工作 {落盘 active_ms}」完成瞬间自动收起；stopped/failed=「已停止」强制展开 |
+| TurnGroup 状态机 | running=「工作中 {耗时}」每秒 tick（仅 running 允许用当前时钟）；success=「已工作 {落盘 active_ms}」完成瞬间自动收起；failed=「已失败 {耗时}」（API 异常等）；stopped=「已停止」强制展开 |
 | 耗时格式 | codex 阶梯：<60s → `45s`；<1h → `3m 05s`；≥1h → `1h 00m 00s` |
 | 聚合组 | 连续只读工具 ≥2 →「探索」组；连续命令 ≥2 →「执行」组 |
 | 代码分包 | markdown（react-markdown + rehype-highlight，体积大头）独立模块，经 MessageItem 的 lazy+Suspense 按需加载；主包 ~284kB，低于 Vite 500kB 告警阈值 |
@@ -246,4 +246,4 @@ frontend/src/
 | 系统 | 记什么 | 不记什么 | 组织与降级 |
 |---|---|---|---|
 | logging（obs.py，默认开） | 工程事件：turn 生命周期、工具调用与耗时、审批请求与决定、压缩发生、错误堆栈 | prompt 与回复正文（属 DB 与 model-io JSONL 职责） | 控制台 + `data/logs/app.log` 滚动（5MB×5）；ERROR=需人处理 / WARNING=可自动恢复 / INFO=生命周期 / DEBUG=默认关 |
-| model-io JSONL（modelio.py，默认开） | **逐次 LLM 调用**的完整快照：system prompt、messages、tool 名称、response 文本与 tool_calls、input/output tokens、耗时、错误 | 工程事件（与 logging 分工） | 每会话一个文件 `log/model-io-<session_id>.jsonl`，逐行 JSON 追加（ZCode 同思想）；每会话可独立配置 `MODELIO_DIR`（测试指向 .tmp-data）；写入失败吞异常记 WARNING，不影响主流程；子循环调用同样记录并带 subtask_id |
+| model-io JSONL（modelio.py，默认开） | **逐次 LLM 调用**的完整快照：system prompt、messages、tool 名称、response 文本与 tool_calls、input/output tokens、缓存读写计量、耗时、错误 | 工程事件（与 logging 分工） | 每会话一个文件 `log/model-io-<session_id>.jsonl`，逐行 JSON 追加（ZCode 同思想）；单文件超 `MODELIO_MAX_MB`（默认 10MB）自动轮转归档；每会话可独立配置 `MODELIO_DIR`（测试指向 .tmp-data）；写入失败吞异常记 WARNING，不影响主流程；子循环调用同样记录并带 subtask_id |

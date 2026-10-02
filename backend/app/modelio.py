@@ -61,11 +61,20 @@ def record_llm_call(
             "usage": {
                 "input_tokens": usage.get("input_tokens", 0),
                 "output_tokens": usage.get("output_tokens", 0),
+                # 缓存计量：端点支持 prompt caching 才有非零值（Anthropic 协议字段）
+                "cache_read_tokens": usage.get("cache_read_tokens", 0),
+                "cache_creation_tokens": usage.get("cache_creation_tokens", 0),
             },
         }
         target = Path(settings.modelio_dir)
         target.mkdir(parents=True, exist_ok=True)
         path = target / f"model-io-{session_id}.jsonl"
+        # 大小轮转：超限的老文件改名归档（带时间戳），新调用写进新文件——
+        # 防超长会话单文件无限增长（docs/RELIABILITY.md §2）
+        max_bytes = max(1, int(settings.modelio_max_bytes))
+        if path.exists() and path.stat().st_size > max_bytes:
+            # 纳秒后缀避免同毫秒轮转改名碰撞（Windows 上 rename 不覆盖同名文件）
+            path.rename(target / f"model-io-{session_id}-{time.time_ns()}.jsonl")
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as exc:  # 观测失败不影响主流程

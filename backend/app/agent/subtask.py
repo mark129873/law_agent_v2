@@ -83,9 +83,13 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                         step_usage = {
                             "input_tokens": event.get("input_tokens", 0),
                             "output_tokens": event.get("output_tokens", 0),
+                            "cache_read_tokens": event.get("cache_read_tokens", 0),
+                            "cache_creation_tokens": event.get("cache_creation_tokens", 0),
                         }
                         deps.recorder.add_usage(
-                            step_usage["input_tokens"], step_usage["output_tokens"]
+                            step_usage["input_tokens"], step_usage["output_tokens"],
+                            cache_read_tokens=step_usage["cache_read_tokens"],
+                            cache_creation_tokens=step_usage["cache_creation_tokens"],
                         )
                         yield {"type": "token_count", **step_usage}
             except Exception as exc:

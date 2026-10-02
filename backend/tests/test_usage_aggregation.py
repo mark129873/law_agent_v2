@@ -27,13 +27,14 @@ def recorder(tmp_data_dir):
 
 
 class FakeClient:
-    """一步假流式客户端：回答 + usage(9/3)，无工具。"""
+    """一步假流式客户端：回答 + usage(9/3，含缓存计量)，无工具。"""
 
     model = "test-model"
 
     async def stream(self, *, system, messages, tools):
         yield {"type": "text_delta", "text": "回答"}
-        yield {"type": "usage", "input_tokens": 9, "output_tokens": 3}
+        yield {"type": "usage", "input_tokens": 9, "output_tokens": 3,
+               "cache_read_tokens": 7, "cache_creation_tokens": 2}
 
 
 def test_turn_usage_fact_and_session_columns(recorder) -> None:
@@ -49,11 +50,13 @@ def test_turn_usage_fact_and_session_columns(recorder) -> None:
     assert events[-1]["state"] == "success"
     # compact 预算拿到真实 input（激活此前无人赋值的死路径）
     assert deps.last_input_tokens == 9
-    # turn 事实：输出累计 / 输入累计 / 最近一步 input（上下文占用口径）
+    # turn 事实：输出累计 / 输入累计 / 最近一步 input（上下文占用口径）/ 缓存读写
     fact = store.entry_data(store.list_entries(recorder.db, "s1", "turn")[0])
     assert fact["tokens_used"] == 3
     assert fact["input_tokens"] == 9
     assert fact["context_tokens"] == 9
+    assert fact["cache_read_tokens"] == 7
+    assert fact["cache_creation_tokens"] == 2
     # 会话双列
     row = recorder.db.get(Session, "s1")
     assert row.tokens_used == 3

@@ -27,11 +27,8 @@
 
 - 当前blocker：无
 - 已知缺陷和风险：
-  - model-io 文件无轮转/上限，超长会话文件会大
-  - cache 计量（cache_read/cache_creation）未采集——按端点能力后续在 turn 事实 data 加键即可（零迁移）
-  - subtask"执行中→已完成"翻转瞬间仍未直接观测（机制等价已验证）
-  - 历史消息全量加载，超长会话可能卡（分页/虚拟化留 v2）
-  - failed 轮回放块头显示"已 stopped"（语义可再分）
+  - 历史消息全量加载，超长会话可能卡（分页/虚拟化留 v2，设计决策）
+  - 纯文本轮（无工具）不渲染工作块头——设计使然，若要"每轮都有块头"需产品决策
   - 本机 IAB 自动化环境：Playwright locator 点击频繁 actionability 超时（evaluate 触发正常，产品无碍；GUI 回归时注意）
 - 未验证路径：无
 - 下一轮会话需要注意的风险：改 models.py 表结构后删除 backend/data/ 重启重建（不做 schema 迁移）；测试后确认 tests/.tmp-data 已清理（Windows 文件锁）；改前端布局必须截图验收；真实跑 turn 会写 log/（含对话正文，勿外传勿入库）

@@ -24,7 +24,8 @@
 | 项 | 约定 |
 |---|---|
 | 位置 | 项目根 `log/model-io-<session_id>.jsonl`（不入库；`MODELIO_DIR` 可覆盖，测试指向 `.tmp-data/`） |
-| 粒度 | **一次 LLM 调用一行 JSON**（追加写）：完整 system prompt、messages 快照、tool 名称、response 文本与 tool_calls、input/output tokens、耗时、错误 |
+| 粒度 | **一次 LLM 调用一行 JSON**（追加写）：完整 system prompt、messages 快照、tool 名称、response 文本与 tool_calls、input/output tokens、缓存读写计量、耗时、错误 |
+| 轮转 | 单文件超过 `MODELIO_MAX_MB`（默认 10MB）自动改名归档（纳秒后缀防碰撞），记录零丢失 |
 | 范围 | 主循环与 subtask 子循环都记（子循环行带 subtask_id） |
 | 失败语义 | 写入失败吞异常记 WARNING，**永不影响对话主流程** |
 | 纪律 | 该目录属运行时产物，绝不提交；含对话正文，勿外传 |

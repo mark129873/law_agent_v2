@@ -66,7 +66,9 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
       ? `工作中 ${fmtDuration(shownMs)}`
       : turn.state === 'success'
         ? `已工作 ${fmtDuration(shownMs)}`
-        : `已停止${shownMs ? ` ${fmtDuration(shownMs)}` : ''}`
+        : turn.state === 'failed'
+          ? `已失败 ${fmtDuration(shownMs)}` // API 异常等失败轮：与"已停止"（用户主动）区分
+          : `已停止${shownMs ? ` ${fmtDuration(shownMs)}` : ''}`
 
   return (
     <div className="space-y-2">
