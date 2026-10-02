@@ -7,6 +7,7 @@
  *   POST /approval 凭 request_id 唤醒后端等待中的 turn）。
  */
 
+import { Warning } from '@phosphor-icons/react'
 import { useState } from 'react'
 
 import { submitApproval } from '../api/client'
@@ -42,9 +43,12 @@ export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModal
 
   return (
     /* 遮罩层：等待期间无法做其他操作（产品决策：永久等待，可点停止） */
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40">
-      <div className="w-[28rem] rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl">
-        <h2 className="text-[15px] font-semibold text-zinc-900">需要你的批准</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-[2px]">
+      <div className="animate-enter w-[28rem] rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl">
+        <h2 className="flex items-center gap-2 text-[15px] font-semibold text-zinc-900">
+          <Warning size={16} weight="fill" className="text-amber-500" />
+          需要你的批准
+        </h2>
         <p className="mt-1 text-[13px] leading-relaxed text-zinc-500">
           助手请求执行一个高危操作，请确认是否允许。
         </p>

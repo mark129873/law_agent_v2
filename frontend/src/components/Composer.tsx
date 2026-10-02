@@ -1,7 +1,12 @@
 /**
  * 输入框：多行输入（Enter 发送 / Shift+Enter 换行）；生成中变为停止按钮。
+ *
+ * 视觉（design-taste 重设计）：一体化浮动输入卡——外层圆角容器承载边框与
+ * focus-within ring，textarea 无边框融入其中；发送为圆形近黑按钮（ArrowUp），
+ * 与聊天类工具的现代形态一致。圆角体系见 docs/ARCHITECTURE.md §7。
  */
 
+import { ArrowUp, Square } from '@phosphor-icons/react'
 import { useRef, useState } from 'react'
 
 export interface ComposerProps {
@@ -23,9 +28,17 @@ export function Composer({ disabled, streaming, onSend, onStop }: ComposerProps)
     areaRef.current?.focus()
   }
 
+  const canSend = !disabled && !streaming && text.trim().length > 0
+
   return (
-    <div className="border-t border-zinc-200 bg-white p-3">
-      <div className="flex items-end gap-2">
+    <div className="bg-zinc-50 px-4 pb-4 pt-1">
+      <div
+        className={`flex items-end gap-2 rounded-2xl border bg-white px-3 py-2.5 transition ${
+          disabled
+            ? 'border-zinc-200 opacity-70'
+            : 'border-zinc-200 focus-within:border-zinc-400 focus-within:shadow-[0_1px_6px_rgb(0_0_0/0.05)]'
+        }`}
+      >
         <textarea
           ref={areaRef}
           value={text}
@@ -40,28 +53,40 @@ export function Composer({ disabled, streaming, onSend, onStop }: ComposerProps)
           rows={2}
           disabled={disabled}
           placeholder={disabled ? '新建或选择一个会话开始对话' : '输入消息，Enter 发送，Shift+Enter 换行'}
-          className="min-h-[52px] flex-1 resize-none rounded-xl border border-zinc-200 px-3.5 py-2.5 text-[15px] text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none disabled:bg-zinc-50"
+          className="max-h-40 min-h-[44px] flex-1 resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-zinc-800 placeholder:text-zinc-400 focus:outline-none disabled:cursor-not-allowed"
         />
         {streaming ? (
-          // 停止按钮（生成中）
+          // 停止按钮（生成中）：方形图标钮，红点提示可中断
           <button
             type="button"
             onClick={onStop}
-            className="h-[52px] shrink-0 rounded-xl border border-zinc-300 px-4 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 active:translate-y-px"
+            title="停止生成"
+            aria-label="停止生成"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-300 text-zinc-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 active:scale-[0.96] motion-reduce:active:scale-100"
           >
-            停止
+            <Square size={11} weight="fill" />
           </button>
         ) : (
           <button
             type="button"
             onClick={trySend}
-            disabled={disabled || !text.trim()}
-            className="h-[52px] shrink-0 rounded-xl bg-zinc-900 px-5 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px disabled:opacity-40"
+            disabled={!canSend}
+            title="发送"
+            aria-label="发送"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition active:scale-[0.96] motion-reduce:active:scale-100 ${
+              canSend
+                ? 'bg-zinc-900 text-white hover:bg-zinc-700'
+                : 'cursor-not-allowed bg-zinc-100 text-zinc-400'
+            }`}
           >
-            发送
+            <ArrowUp size={16} weight="bold" />
           </button>
         )}
       </div>
+      {/* 输入提示：弱化到几乎不可见，占位但不成噪 */}
+      <p className="mt-1.5 text-center text-[11px] text-zinc-300">
+        Enter 发送 · Shift+Enter 换行
+      </p>
     </div>
   )
 }

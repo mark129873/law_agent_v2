@@ -225,7 +225,10 @@ frontend/src/
 | 耗时格式 | codex 阶梯：<60s → `45s`；<1h → `3m 05s`；≥1h → `1h 00m 00s` |
 | 聚合组 | 连续只读工具 ≥2 →「探索」组；连续命令 ≥2 →「执行」组 |
 | 代码分包 | markdown（react-markdown + rehype-highlight，体积大头）独立模块，经 MessageItem 的 lazy+Suspense 按需加载；主包 ~284kB，低于 Vite 500kB 告警阈值 |
-| 视觉 | 浅色单主题：zinc-50 底 + 白面板 + zinc-200 发丝线；近黑主按钮 + 单一强调色；代码/数字/耗时等宽字体；无渐变、无发光、无 emoji；Phosphor 图标；CSS 轻动效并尊重 prefers-reduced-motion；空/加载/错误态齐全 |
+| 视觉 | 浅色单主题：zinc-50 底 + 白面板 + zinc-200 发丝线；近黑主按钮 + 单一强调色（sky-600，仅运行态/焦点/选中标记——Color Lock）；代码/数字/耗时等宽字体 + tabular-nums；无渐变、无发光、无 emoji；Phosphor 图标；CSS 轻动效（消息入场 animate-enter）尊重 prefers-reduced-motion；细滚动条；空/加载/错误态齐全 |
+| 圆角体系 | 按钮 rounded-lg、卡片/工作块 rounded-xl、输入卡 rounded-2xl、徽标/圆形钮 full（Shape Consistency Lock） |
+| Composer | 一体化浮动输入卡（rounded-2xl 容器承载边框与 focus-within ring，textarea 无边框融入）+ 圆形发送钮（ArrowUp，禁用灰/可发近黑）；生成中变方形停止钮 |
+| 欢迎页 | 居中排版：标题+副文案+四项能力内联图标行+hairline+主按钮+"数据仅保存在本机"脚注；入场 animate-enter |
 
 ## 8. 并发与失败语义
 

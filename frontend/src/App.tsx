@@ -21,7 +21,7 @@ import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
 import { ApiError, createSession, getSessionDetail, stopTurn } from './api/client'
 import { ShellContext, useShell } from './ShellContext'
 import { useSessionStream } from './hooks/useSessionStream'
-import { SidebarSimple } from '@phosphor-icons/react'
+import { FileText, ListChecks, SidebarSimple, TerminalWindow, UsersThree } from '@phosphor-icons/react'
 import type { SessionDetail, SessionItem } from './types'
 
 /** 左栏开合的本地记忆键：ZCode 同语义（isSidebarVisible 持久化） */
@@ -63,32 +63,43 @@ function AppShell() {
     })
   }, [])
 
-  /** 导航进入指定会话（选中列表项与新建草稿共用同一动作） */
+  /** 导航进入指定会话（选中列表项共用） */
   const openSession = useCallback(
     (id: string) => navigate(`/session/${id}`),
     [navigate],
   )
 
+  /**
+   * 侧栏/欢迎页新建草稿的统一出口：先把 id 登记进 draftIdsRef 再导航。
+   * 漏登记会让草稿页的 404 被当成未知会话弹回首页（实测踩过的坑）。
+   */
+  const handleDraftCreated = useCallback(
+    (id: string) => {
+      draftIdsRef.current.add(id)
+      openSession(id)
+    },
+    [openSession],
+  )
+
   /** 新建会话：拿 draft id 后进入会话视图（首条消息发出才落库） */
   const handleNewSession = useCallback(async () => {
     const { id } = await createSession()
-    draftIdsRef.current.add(id)
-    openSession(id)
-  }, [openSession])
+    handleDraftCreated(id)
+  }, [handleDraftCreated])
 
   return (
     /* 三栏布局的 flex 容器：侧栏与路由出口（中/右栏）必须并排，
        不能换成 Fragment——容器一旦消失，侧栏与主区会垂直堆叠（实测踩过） */
     <ShellContext.Provider value={{ sidebarOpen, toggleSidebar }}>
       <div className="flex h-full">
-        {/* 左栏：会话列表 */}
-        <Sidebar
-          sessions={sessions}
-          currentId={currentId}
-          onSelect={openSession}
-          onSessionsChange={setSessions}
-          onDraftCreated={openSession}
-        />
+      {/* 左栏：会话列表 */}
+      <Sidebar
+        sessions={sessions}
+        currentId={currentId}
+        onSelect={openSession}
+        onSessionsChange={setSessions}
+        onDraftCreated={handleDraftCreated}
+      />
 
         <Routes>
           {/* 欢迎页 + 会话视图；其余任意地址兜底回欢迎页 */}
@@ -108,22 +119,45 @@ function AppShell() {
 function WelcomePage({ onNewSession }: { onNewSession: () => void }) {
   const { sidebarOpen, toggleSidebar } = useShell()
   return (
-    <main className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-50">
+    <main className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 bg-zinc-50 px-8">
       {/* 左栏开合按钮：常驻左上角（侧栏收起后仍可找回） */}
       <div className="absolute left-3 top-3">
         <SidebarToggle sidebarOpen={sidebarOpen} onToggle={toggleSidebar} />
       </div>
-      <h1 className="text-2xl font-semibold tracking-tight text-zinc-800">个人助手</h1>
-      <p className="max-w-[28rem] text-center text-sm leading-relaxed text-zinc-500">
-        能读文件、跑命令、管任务、派子助手的本地工作伙伴。左侧新建一个会话，开始对话。
-      </p>
-      <button
-        type="button"
-        onClick={onNewSession}
-        className="rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px"
-      >
-        新建会话
-      </button>
+
+      <div className="animate-enter flex max-w-lg flex-col items-center text-center">
+        <h1 className="text-[26px] font-semibold tracking-tight text-zinc-900">个人助手</h1>
+        <p className="mt-2.5 text-[14px] leading-relaxed text-zinc-500">
+          能读文件、跑命令、管任务、派子助手的本地工作伙伴
+        </p>
+
+        {/* 能力内联提示：单行图标+词，不做卡片阵列 */}
+        <div className="mt-5 flex items-center gap-4 text-[12px] text-zinc-400">
+          <span className="inline-flex items-center gap-1.5">
+            <FileText size={13} weight="regular" /> 读写文件
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <TerminalWindow size={13} weight="regular" /> 执行命令
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <ListChecks size={13} weight="regular" /> 管理任务
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <UsersThree size={13} weight="regular" /> 派子助手
+          </span>
+        </div>
+
+        <div className="mt-6 h-px w-40 bg-zinc-200" />
+
+        <button
+          type="button"
+          onClick={onNewSession}
+          className="mt-6 rounded-lg bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px"
+        >
+          新建会话
+        </button>
+        <p className="mt-3 text-[11px] text-zinc-400">所有数据仅保存在本机</p>
+      </div>
     </main>
   )
 }

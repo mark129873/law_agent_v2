@@ -113,7 +113,7 @@ export function Sidebar(props: SidebarProps) {
       {/* 会话列表 */}
       <nav className="flex-1 overflow-y-auto px-2 pb-3" aria-label="会话列表">
         {sessions.length === 0 && (
-          <p className="px-3 py-6 text-center text-xs leading-relaxed text-zinc-400">
+          <p className="px-3 py-8 text-center text-xs leading-relaxed text-zinc-300">
             还没有会话
             <br />
             点击"新建会话"开始
@@ -124,6 +124,10 @@ export function Sidebar(props: SidebarProps) {
             const selected = s.id === currentId
             return (
               <li key={s.id} className="relative">
+                {/* 选中态：左侧 2px 强调色竖条（Color Lock：sky-600） */}
+                {selected && (
+                  <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-sky-600" />
+                )}
                 <button
                   type="button"
                   onClick={() => onSelect(s.id)}

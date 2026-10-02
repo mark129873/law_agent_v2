@@ -3,8 +3,11 @@
 
 /* 主题约定（docs/ARCHITECTURE.md §7 视觉）：
    - 页面底 zinc-50，面板白，发丝线 zinc-200，正文 zinc-900
-   - 主按钮近黑 zinc-900，强调色 sky-600，错误 red-600，成功 emerald-600
-   - 代码/数字/耗时用等宽字体 */
+   - 主按钮近黑 zinc-900；强调色 sky-600 仅用于运行态/焦点/链接（Color Lock）
+   - 成功 emerald-600 仅任务板；警告 amber；错误 red
+   - 圆角体系：按钮 rounded-lg，卡片/块 rounded-xl，输入卡 rounded-2xl，徽标 full
+   - 代码/数字/耗时用等宽字体 + tabular-nums */
+
 :root {
   color-scheme: light;
 }
@@ -19,13 +22,64 @@ body {
     "Microsoft YaHei", "Noto Sans SC", sans-serif;
 }
 
-/* 等宽工具类（耗时/token/代码行内用） */
+/* 等宽工具类（耗时/token/代码行内用）；tabular-nums 让数字跳动时不抖动 */
 .font-num {
   font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 流式文本光标（生成中显示） */
 .stream-cursor::after {
   content: "▍";
   @apply text-zinc-400 animate-pulse;
+}
+
+/* ---------- 质感细节 ---------- */
+
+/* 选中文字：强调色淡底 */
+::selection {
+  background-color: rgb(2 132 199 / 0.15); /* sky-600 @ 15% */
+}
+
+/* 细滚动条：冷静不发抢 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(212 212 216 / 0.9) transparent; /* zinc-300 */
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(212 212 216 / 0.9);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(161 161 170); /* zinc-400 */
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 键盘焦点：统一强调色 ring（鼠标点击不出现） */
+:focus-visible {
+  outline: 2px solid rgb(2 132 199 / 0.5); /* sky-600 @ 50% */
+  outline-offset: 1px;
+}
+
+/* 消息/面板入场：轻微上浮淡入（尊重 reduced-motion） */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-enter {
+    animation: enter 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
