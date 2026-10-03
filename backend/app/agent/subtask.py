@@ -8,15 +8,16 @@
 - token 口径：子循环每次调用的 usage 与主循环同口径处理——累计进会话
   tokens_used、发 token_count 事件、写入 model-io JSONL（带 subtask_id）。
 
-权限差异：子助手中 deny-list 仍然生效（返回 Error 字符串），高危操作
-自动放行（交互审批只存在于主循环——子助手是父任务委派的执行细节）。
+权限（ZCode 同语义：子代理请求路由父会话 UI）：子工具与主循环同权——
+allow 执行 / deny 拒绝（Error 字符串喂回）/ ask 走 deps.approver 交互审批
+（弹窗出现在父会话，批准后执行）。计划模式下子代理继承只读约束。
 """
 
 import asyncio
 import logging
 import time
 
-from app.agent import permissions
+from app.agent.permission_service import evaluate
 from app.agent.tools import TOOL_HANDLERS, TOOLS, execute_tool
 from app.modelio import record_llm_call
 
@@ -139,14 +140,29 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                 if deps.stop_flag():
                     status = "stopped"
                     break
-                # deny-list 照样生效；高危自动放行（见模块注释）
-                decision, reason = permissions.check(t["name"], t.get("input") or {})
-                if decision == "deny":
-                    out = f"Error: 已被安全策略拒绝：{reason}"
-                else:
+                # 子工具权限与主循环同权（ZCode：子代理请求路由父会话 UI）：
+                # allow 执行 / deny 拒绝 / ask 走交互审批（挂起等待，工时暂停）
+                result = evaluate(None, t["name"], t.get("input") or {})
+                if result["decision"] == "allow":
                     out = await asyncio.to_thread(
                         execute_tool, t["name"], t.get("input") or {}
                     )
+                elif result["decision"] == "ask":
+                    deps.recorder.pause_active()
+                    try:
+                        approved = await deps.approver(
+                            t["name"], t.get("input") or {}, result["reason"]
+                        )
+                    finally:
+                        deps.recorder.resume_active()
+                    if approved:
+                        out = await asyncio.to_thread(
+                            execute_tool, t["name"], t.get("input") or {}
+                        )
+                    else:
+                        out = f"Error: 用户拒绝了该操作：{result['reason']}"
+                else:
+                    out = f"Error: 已被安全策略拒绝：{result['reason']}"
                 tool_results.append(
                     {"type": "tool_result", "tool_use_id": t["id"], "content": out}
                 )

@@ -142,13 +142,17 @@ backend/data/
 | 停止 | stop_flag 检查点：流中 / 每工具前 / 每轮开始；命中即 stopped 收口，已生成部分已落盘 |
 | 反应式压缩重试 | API 报 prompt_too_long → 压缩后重试一次 |
 
-### 4.2 权限闸门三档（`permissions.py`，硬编码词表）
+### 4.2 权限体系（ZCode PermissionService 复刻）
 
-| 档 | 触发 | 行为 |
-|---|---|---|
-| deny | sudo、`rm -rf /` 等禁止清单 | 硬拒，Error 回喂 |
-| approve | shell 删除、chmod、管道执行、越界写 | 挂起等用户审批（SSE 推 approval_request）；拒绝理由回喂，模型自行改道 |
-| allow | 其余 | 自动执行 |
+**协作模式**（随提交生效，存 `data/execution_state.json`）：`build` 变更前确认 / `edit` 自动编辑 / `yolo` 完全访问 + **`planEnabled` 独立标志**（plan 非第四种 mode；开启时 yolo 直通失效，写入一律拒绝）。前端 Composer 草稿选择随 POST /turn 携带（缺省沿用当前）。
+
+**工具能力声明**（`permission_service.TOOL_SPECS`）：`{permission, riskLevel, sideEffectScope, needsApproval, destructive, readOnly}`——read_file/glob/load_skill=low·只读；write_file/edit_file=medium·workspace·edit 类；**bash=high·system·破坏性**；delete_file=high·workspace（移入 rubbish 可恢复，机制保留）；todo_write=low·session；subtask=low·session；enter/exit_plan_mode=计划进出。**Bash 只读命令运行时降级**（白名单：ls/cat/echo/pwd/git status 等，含管道重定向不降级）。
+
+**评估顺序**（`check_permission`，deny 恒压 allow）：硬拒（deny-list+路径越界，任何模式不可越过）→ plan 进出特判（enter 免确认 / exit 仅 plan 中 ask 否则硬拒）→ **yolo 直通（planEnabled 失效）** → **deny 规则** → **ask 规则** → **plan 检查**（readOnly 非破坏 allow，其余一律 DENY 不弹窗）→ **allow 规则** → **edit 检查**（edit 类+workspace 免确认，否则落 build）→ **build 检查**（readOnly allow → high ask → 低风险 session 态 allow → 有副作用 ask → 兜底 allow）。
+
+**规则系统**（`data/permission_rules.json`，`{version, allow:[{tool, content?}], deny:[...]}`）：匹配 `cmd:*` 前缀（词边界）/`*` 通配/精确；subject 从 input 依次取 command/url/file_path/path/pattern；**高危根命令（rm/sudo/del…）禁止生成前缀规则、退化为整条精确**。持久化与读取在 `sessions/execution_state.py`。
+
+**审批流**：ask → InteractiveApprover 挂起（工时暂停）→ SSE approval_request → POST /approval 唤醒；拒绝理由作为 tool_result 喂回模型。
 
 ### 4.3 subtask 子助手
 

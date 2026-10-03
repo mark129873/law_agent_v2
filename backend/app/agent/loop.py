@@ -21,7 +21,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
-from app.agent import hooks, permissions
+from app.agent import hooks
+from app.agent.permission_service import evaluate
 from app.agent.tools import TOOLS, execute_tool
 from app.modelio import record_llm_call
 from app.sessions.recorder import TurnRecorder
@@ -292,7 +293,9 @@ async def _execute_one(
 
     hooks.trigger("PreToolUse", {"name": name, "tool_call_id": call_id})
 
-    decision, reason = permissions.check(name, tool_input)
+    # 权限评估（ZCode checkPermission 复刻）：allow 执行 / deny 拒绝 / ask 走审批
+    result = evaluate(deps.settings.data_dir if deps.settings else None, name, tool_input)
+    decision, reason = result["decision"], result["reason"]
     status = "completed"
     output: str | None = None
 
@@ -300,15 +303,15 @@ async def _execute_one(
         output = f"Error: 已被安全策略拒绝：{reason}"
         status = "denied"
     else:
-        if decision == "approve":
+        if decision == "ask":
             # 审批等待不计入有效工时（active_ms 口径）
             deps.recorder.pause_active()
             try:
-                approved = await deps.approver(name, tool_input, reason or "高危操作")
+                approved = await deps.approver(name, tool_input, reason or "该操作需要确认")
             finally:
                 deps.recorder.resume_active()
             if not approved:
-                output = f"Error: 用户拒绝了该操作：{reason or '高危操作'}"
+                output = f"Error: 用户拒绝了该操作：{reason or '该操作需要确认'}"
                 status = "denied"
 
         if output is None:

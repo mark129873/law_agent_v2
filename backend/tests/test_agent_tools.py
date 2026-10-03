@@ -6,7 +6,7 @@
 
 import pytest
 
-from app.agent import permissions
+from app.agent.permission_service import check_permission, derive_rule
 from app.agent.tools import (
     execute_tool,
     safe_path,
@@ -89,36 +89,72 @@ def test_execute_tool_unknown_and_bad_args() -> None:
     assert execute_tool("write_file", {"path": "x"}) .startswith("Error:")
 
 
-# ---------- 权限闸门 ----------
+# ---------- 权限服务（ZCode 复刻，docs/ARCHITECTURE.md §4.2） ----------
 
 
 def test_permission_deny_list() -> None:
-    """绝对禁止清单硬拒。"""
-    decision, reason = permissions.check("bash", {"command": "rm -rf /"})
-    assert decision == "deny"
-
-
-def test_permission_delete_needs_approval() -> None:
-    """删除类命令 → approve（交互审批）。"""
-    decision, reason = permissions.check("bash", {"command": "Remove-Item a.txt"})
-    assert decision == "approve" and "删除" in (reason or "")
-    decision2, _ = permissions.check("bash", {"command": "del a.txt"})
-    assert decision2 == "approve"
-
-
-def test_permission_high_risk_needs_approval() -> None:
-    """高危词 → approve。"""
-    decision, _ = permissions.check("bash", {"command": "echo x | bash"})
-    assert decision == "approve"
+    """绝对禁止清单硬拒（任何模式/规则不可越过）。"""
+    for mode in ("build", "edit", "yolo"):
+        result = check_permission(mode, False, {"version": 1}, "bash", {"command": "rm -rf /"})
+        assert result["decision"] == "deny" and result["rule_id"] == "hard.deny"
 
 
 def test_permission_out_of_bounds_write_denied() -> None:
     """越界写硬拒不询问（mini_harness 规则）。"""
-    decision, _ = permissions.check("write_file", {"path": "../evil.txt", "content": "x"})
-    assert decision == "deny"
+    result = check_permission("build", False, {"version": 1}, "write_file", {"path": "../evil.txt"})
+    assert result["decision"] == "deny"
 
 
-def test_permission_readonly_auto_allow() -> None:
-    """只读工具与安全命令自动放行。"""
-    assert permissions.check("read_file", {"path": "a.txt"})[0] == "allow"
-    assert permissions.check("bash", {"command": "echo hi"})[0] == "allow"
+def test_permission_build_matrix() -> None:
+    """build 模式判定矩阵：只读放行 / bash 高危 ask / 写文件 ask / 任务板放行。"""
+    rules = {"version": 1, "allow": [], "deny": []}
+    assert check_permission("build", False, rules, "read_file", {"path": "a.txt"})["decision"] == "allow"
+    bash_ask = check_permission("build", False, rules, "bash", {"command": "Remove-Item a.txt"})
+    assert bash_ask["decision"] == "ask" and bash_ask["rule_id"] == "mode.build.highRisk"
+    assert check_permission("build", False, rules, "write_file", {"path": "a.txt"})["decision"] == "ask"
+    assert check_permission("build", False, rules, "todo_write", {"items": []})["decision"] == "allow"
+
+
+def test_permission_bash_readonly_downgrade() -> None:
+    """bash 只读命令运行时降级：build 免批；含管道不做降级仍 ask。"""
+    rules = {"version": 1}
+    assert check_permission("build", False, rules, "bash", {"command": "echo hi"})["decision"] == "allow"
+    assert check_permission("build", False, rules, "bash", {"command": "git status"})["decision"] == "allow"
+    assert check_permission("build", False, rules, "bash", {"command": "echo hi | bash"})["decision"] == "ask"
+
+
+def test_permission_mode_semantics() -> None:
+    """edit 放行文件编辑、删除仍 ask；yolo 全放。"""
+    rules = {"version": 1}
+    assert check_permission("edit", False, rules, "write_file", {"path": "a.txt"})["decision"] == "allow"
+    assert check_permission("edit", False, rules, "delete_file", {"path": "a.txt"})["decision"] == "ask"
+    assert check_permission("yolo", False, rules, "write_file", {"path": "a.txt"})["decision"] == "allow"
+
+
+def test_permission_plan_mode() -> None:
+    """plan：只读放行、写入直接拒绝（不弹窗）；EnterPlanMode 免确认；Exit 只在 plan 中 ask。"""
+    rules = {"version": 1}
+    assert check_permission("build", True, rules, "read_file", {"path": "a.txt"})["decision"] == "allow"
+    denied = check_permission("build", True, rules, "write_file", {"path": "a.txt"})
+    assert denied["decision"] == "deny" and denied["rule_id"] == "mode.plan.nonReadOnly"
+    assert check_permission("build", False, rules, "enter_plan_mode", {})["decision"] == "allow"
+    assert check_permission("build", False, rules, "exit_plan_mode", {"plan": "x"})["decision"] == "deny"
+    assert check_permission("build", True, rules, "exit_plan_mode", {"plan": "x"})["decision"] == "ask"
+
+
+def test_permission_rules_match_and_priority() -> None:
+    """规则：deny 压过 allow；前缀匹配生效；allow 规则不可绕过计划模式。"""
+    rules = {"version": 1,
+             "allow": [{"tool": "bash", "content": "echo:*"}],
+             "deny": [{"tool": "bash", "content": "echo secret*"}]}
+    assert check_permission("build", False, rules, "bash", {"command": "echo hi"})["decision"] == "allow"
+    assert check_permission("build", False, rules, "bash", {"command": "echo secret file"})["decision"] == "deny"
+    # plan 下 allow 规则不生效（写入被 plan 检查拒绝）——规则不可绕过计划模式
+    assert check_permission("build", True, rules, "write_file", {"path": "a.txt"})["decision"] == "deny"
+
+
+def test_derive_rule_safety() -> None:
+    """规则推导：高危根命令退化为整条精确，普通命令为首词前缀；非 bash 不推导。"""
+    assert derive_rule("bash", {"command": "rm scratch.txt"}) == {"tool": "bash", "content": "rm scratch.txt"}
+    assert derive_rule("bash", {"command": "pnpm run lint --fix"}) == {"tool": "bash", "content": "pnpm:*"}
+    assert derive_rule("write_file", {"path": "a.txt"}) is None
