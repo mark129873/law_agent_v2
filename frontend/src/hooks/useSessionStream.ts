@@ -21,15 +21,23 @@ export interface LiveTurnState {
   tokenCount: { input: number; output: number } | null
 }
 
+/** 实时流中的未决审批（弹窗数据源；刷新恢复走回放的 pending_approval，形状一致） */
+export interface LivePendingApproval {
+  request_id: string
+  tool: string
+  input: unknown
+  reason: string
+  options: { option_id: string; label: string; content?: string }[]
+  full_access: boolean
+}
+
 export function useSessionStream(sessionId: string | null) {
   const [turn, setTurn] = useState<TurnData | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tokenCount, setTokenCount] = useState<{ input: number; output: number } | null>(null)
   // 未决审批（FE-4 弹窗数据源）：approval_request 置入，approval_resolved 清除
-  const [pendingApproval, setPendingApproval] = useState<
-    { request_id: string; tool: string; input: unknown; reason: string } | null
-  >(null)
+  const [pendingApproval, setPendingApproval] = useState<LivePendingApproval | null>(null)
 
   // 用 ref 持有正在构建的 turn，避免闭包读到旧状态
   const turnRef = useRef<TurnData | null>(null)
@@ -167,6 +175,8 @@ export function useSessionStream(sessionId: string | null) {
             tool: event.tool,
             input: event.input,
             reason: event.reason,
+            options: event.options,
+            full_access: event.full_access,
           })
           pendingApprovalRef.current = { request_id: event.request_id }
           break

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.config import settings
 from app.models import Message, Part, Session, now_ms
+from app.sessions.approvals import build_options
 from app.sessions.store import _load, entry_data, list_entries
 
 
@@ -206,9 +207,16 @@ def load_replay(
         result_turns.append(bucket)
 
     # 未决审批：用上面去重后的最新状态（仍是 requested 即未决）。
+    # 附上动态选项与 full_access 标志——刷新恢复的弹窗与实时流同构。
     pending = next(
         (a for a in latest_by_request.values() if a.get("status") == "requested"), None
     )
+    if pending is not None:
+        pending = {
+            **pending,
+            "options": build_options(pending.get("tool", ""), pending.get("input") or {}, True),
+            "full_access": True,
+        }
 
     return {
         "session": {

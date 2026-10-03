@@ -255,17 +255,65 @@ def stop_turn(session_id: str) -> dict:
 
 
 class ApprovalIn(BaseModel):
-    """POST /approval 请求体。"""
+    """POST /approval 请求体。
+
+    option_id：allowOnce / allowAlways / deny / fullAccess（弹窗动态选项的应答）；
+    approved：旧客户端兼容字段（True→allowOnce，False→deny）；
+    feedback：拒绝时的用户反馈（≤4096 字符，拼进喂回模型的理由）。
+    """
 
     request_id: str
-    approved: bool
+    option_id: str | None = None
+    feedback: str | None = None
+    approved: bool | None = None
 
 
 @router.post("/{session_id}/approval")
 def submit_approval(session_id: str, body: ApprovalIn) -> dict:
-    """提交审批决定：唤醒正在等待的 turn（与连接无关，刷新后仍可提交）。"""
-    from app.sessions import approvals
+    """提交审批决定：唤醒正在等待的 turn（与连接无关，刷新后仍可提交）。
 
-    if not approvals.resolve(body.request_id, body.approved):
+    选项语义（ZCode 同款）：
+    - allowOnce：仅本次放行；
+    - allowAlways：从注册表取 tool/input 推导规则并落盘，再放行本次；
+    - fullAccess：会话协作模式切 yolo 持久化（一次性应答，不写规则），再放行本次；
+    - deny / 未知 optionId：拒绝（未知 id 兜底拒绝，ZCode 同款）。
+    """
+    from app.agent.permission_service import derive_rule
+    from app.sessions import approvals, execution_state
+
+    option_id = body.option_id or ("allowOnce" if body.approved else "deny")
+    feedback = (body.feedback or "").strip()[:4096] or None
+
+    if option_id == "fullAccess":
+        info = approvals.get_request(body.request_id)
+        if info is None or not info.get("full_access"):
+            raise HTTPException(status_code=404, detail="审批请求不存在或不支持完全访问")
+        current = execution_state.load_execution_state(settings.data_dir)
+        execution_state.save_execution_state(settings.data_dir, "yolo", current["plan_enabled"])
+        if not approvals.resolve(body.request_id, True):
+            raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
+        logger.info("完全访问已授权 session=%s", session_id)
+        return {"ok": True, "mode": "yolo"}
+
+    if option_id == "allowAlways":
+        info = approvals.get_request(body.request_id)
+        if info is None:
+            raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
+        rule = derive_rule(info.get("tool") or "", info.get("input") or {})
+        if rule:
+            execution_state.add_permission_rule(
+                settings.data_dir, "allow", rule["tool"], rule["content"]
+            )
+            logger.info("审批规则已保存 tool=%s content=%s", rule["tool"], rule["content"])
+
+    if option_id == "allowOnce" or option_id == "allowAlways":
+        approved, used_feedback = True, None
+    elif option_id == "deny":
+        approved, used_feedback = False, feedback
+    else:
+        # 未知 optionId 一律拒绝兜底（ZCode 同款）
+        approved, used_feedback = False, feedback
+
+    if not approvals.resolve(body.request_id, approved, used_feedback):
         raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
     return {"ok": True}

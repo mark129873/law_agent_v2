@@ -166,7 +166,7 @@ def test_approval_rejected(recorder) -> None:
     ])
 
     async def reject_all(tool, tool_input, reason):
-        return False
+        return {"approved": False, "denial_reason": "测试拒绝"}
 
     deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
                     history=[{"role": "user", "content": "删文件"}], approver=reject_all)
@@ -190,7 +190,7 @@ def test_approval_approved_executes(recorder) -> None:
 
     async def approve_all(tool, tool_input, reason):
         approved_calls.append(tool)
-        return True
+        return {"approved": True, "denial_reason": None}
 
     deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
                     history=[{"role": "user", "content": "删掉 a.txt"}], approver=approve_all)

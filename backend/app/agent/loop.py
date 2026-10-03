@@ -36,13 +36,13 @@ MAX_STEPS_DEFAULT = 40
 _PREVIEW_LEN = 400
 
 
-async def _auto_approver(tool_name: str, tool_input: dict, reason: str) -> bool:
-    """默认审批回调：BE-4 阶段自动批准（BE-6 替换为 SSE 交互审批）。
+async def _auto_approver(tool_name: str, tool_input: dict, reason: str, **_kwargs) -> dict:
+    """默认审批回调：BE-4 阶段自动批准（BE-6 的交互审批经 deps 注入替换）。
 
-    为什么默认放行：BE-4 只验证循环与权限分档逻辑本身；交互审批是
-    BE-6 的独立功能，届时通过 TurnDeps.approver 注入，循环不改一行。
+    为什么默认放行：验证循环与权限分档逻辑本身；返回 dict 与
+    InteractiveApprover 的契约一致（approved + denial_reason）。
     """
-    return True
+    return {"approved": True, "denial_reason": None}
 
 
 @dataclass
@@ -307,11 +307,12 @@ async def _execute_one(
             # 审批等待不计入有效工时（active_ms 口径）
             deps.recorder.pause_active()
             try:
-                approved = await deps.approver(name, tool_input, reason or "该操作需要确认")
+                outcome = await deps.approver(name, tool_input, reason or "该操作需要确认")
             finally:
                 deps.recorder.resume_active()
+            approved = outcome["approved"]
             if not approved:
-                output = f"Error: 用户拒绝了该操作：{reason or '该操作需要确认'}"
+                output = f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or reason}"
                 status = "denied"
 
         if output is None:

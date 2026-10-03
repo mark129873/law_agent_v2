@@ -246,19 +246,35 @@ function WorkItemRow({
       return (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
           <div className="flex items-center justify-between">
-            <p className="text-[13px] text-amber-800">
+            <p
+              className={`text-[13px] ${
+                item.status === 'auto'
+                  ? 'text-sky-700'
+                  : item.status === 'approved'
+                    ? 'text-emerald-700'
+                    : 'text-amber-800'
+              }`}
+            >
               审批：<span className="font-mono">{item.tool}</span> · {item.reason}
             </p>
             <span
-              className={`text-[11px] ${
-                item.status === 'approved'
-                  ? 'text-emerald-600'
-                  : item.status === 'denied'
-                    ? 'text-red-600'
-                    : 'text-amber-600'
+              className={`shrink-0 text-[11px] ${
+                item.status === 'auto'
+                  ? 'text-sky-600'
+                  : item.status === 'approved'
+                    ? 'text-emerald-600'
+                    : item.status === 'denied'
+                      ? 'text-red-600'
+                      : 'text-amber-600'
               }`}
             >
-              {item.status === 'approved' ? '已批准' : item.status === 'denied' ? '已拒绝' : '等待批准'}
+              {item.status === 'auto'
+                ? '自动放行'
+                : item.status === 'approved'
+                  ? '已批准'
+                  : item.status === 'denied'
+                    ? '已拒绝'
+                    : '等待批准'}
             </span>
           </div>
         </div>

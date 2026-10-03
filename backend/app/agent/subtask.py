@@ -148,19 +148,22 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                         execute_tool, t["name"], t.get("input") or {}
                     )
                 elif result["decision"] == "ask":
+                    # 复刻 ZCode：子助手的权限请求路由到父会话 UI 交互审批
+                    # （allow_full_access=False：子代理不投放"完全访问"选项）
                     deps.recorder.pause_active()
                     try:
-                        approved = await deps.approver(
-                            t["name"], t.get("input") or {}, result["reason"]
+                        outcome = await deps.approver(
+                            t["name"], t.get("input") or {}, result["reason"],
+                            allow_full_access=False,
                         )
                     finally:
                         deps.recorder.resume_active()
-                    if approved:
+                    if outcome["approved"]:
                         out = await asyncio.to_thread(
                             execute_tool, t["name"], t.get("input") or {}
                         )
                     else:
-                        out = f"Error: 用户拒绝了该操作：{result['reason']}"
+                        out = f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or result['reason']}"
                 else:
                     out = f"Error: 已被安全策略拒绝：{result['reason']}"
                 tool_results.append(

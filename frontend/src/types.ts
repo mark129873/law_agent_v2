@@ -43,7 +43,7 @@ export type WorkItem =
       tool: string
       input: unknown
       reason: string
-      status: 'requested' | 'approved' | 'denied'
+      status: 'requested' | 'approved' | 'denied' | 'auto' // auto = 权限规则放行
       time: number
     }
   | {
@@ -94,6 +94,8 @@ export interface SessionDetail {
     input: unknown
     reason: string
     status: string
+    options?: { option_id: string; label: string; content?: string }[]
+    full_access?: boolean
     time?: number
   } | null
 }
@@ -114,7 +116,15 @@ export type SseEvent =
   | { type: 'subtask_started'; subtask_id: string; goal: string }
   | { type: 'subtask_delta'; subtask_id: string; text: string }
   | { type: 'subtask_completed'; subtask_id: string; status: string }
-  | { type: 'approval_request'; request_id: string; tool: string; input: unknown; reason: string }
+  | {
+      type: 'approval_request'
+      request_id: string
+      tool: string
+      input: unknown
+      reason: string
+      options: { option_id: string; label: string; content?: string }[] // 动态选项（allowOnce/fullAccess/allowAlways/deny）
+      full_access: boolean // 是否投放"完全访问"（子助手请求不投放）
+    }
   | { type: 'approval_resolved'; request_id: string; approved: boolean }
   | { type: 'token_count'; input_tokens: number; output_tokens: number }
   | { type: 'compacted'; tokens_before: number; tokens_after: number }

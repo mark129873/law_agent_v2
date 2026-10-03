@@ -61,15 +61,20 @@ export function stopTurn(id: string): Promise<{ ok: boolean }> {
   return request(`/api/sessions/${id}/stop`, { method: 'POST' })
 }
 
-/** 提交审批决定（与连接无关：刷新后仍可提交） */
+/** 提交审批决定（动态选项应答；仅 deny 携带反馈，与连接无关：刷新后仍可提交） */
 export function submitApproval(
   id: string,
   requestId: string,
-  approved: boolean,
+  optionId: string,
+  feedback?: string,
 ): Promise<{ ok: boolean }> {
   return request(`/api/sessions/${id}/approval`, {
     method: 'POST',
-    body: JSON.stringify({ request_id: requestId, approved }),
+    body: JSON.stringify({
+      request_id: requestId,
+      option_id: optionId,
+      ...(feedback ? { feedback } : {}),
+    }),
   })
 }
 

@@ -15,6 +15,7 @@ import { TokenBadge } from './TokenBadge'
 import { TurnGroup } from './TurnGroup'
 import { Composer } from './Composer'
 import { useShell } from '../ShellContext'
+import type { LivePendingApproval } from '../hooks/useSessionStream'
 import type { PendingApproval } from './ApprovalModal'
 import type { SubtaskItem } from './SubtaskViewer'
 import type { SessionDetail, TurnData } from '../types'
@@ -26,7 +27,7 @@ export interface ChatAreaProps {
   currentId: string | null
   streamError: string | null
   /** 实时流中的未决审批（useSessionStream） */
-  livePendingApproval: { request_id: string; tool: string; input: unknown; reason: string } | null
+  livePendingApproval: LivePendingApproval | null
   onSend: (text: string) => void
   onStop: () => void
   /** 错误卡片"重试"→ 重新生成（保留用户消息重跑） */
