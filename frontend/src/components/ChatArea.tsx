@@ -16,6 +16,7 @@ import { TurnGroup } from './TurnGroup'
 import { Composer } from './Composer'
 import { useShell } from '../ShellContext'
 import type { LivePendingApproval } from '../hooks/useSessionStream'
+import type { ExecutionDraft, PermissionState } from '../api/client'
 import type { PendingApproval } from './ApprovalModal'
 import type { SubtaskItem } from './SubtaskViewer'
 import type { SessionDetail, TurnData } from '../types'
@@ -26,9 +27,11 @@ export interface ChatAreaProps {
   isStreaming: boolean
   currentId: string | null
   streamError: string | null
+  /** 当前执行状态（模式/计划标志）：模式切换器初值与回显 */
+  permission: PermissionState
   /** 实时流中的未决审批（useSessionStream） */
   livePendingApproval: LivePendingApproval | null
-  onSend: (text: string) => void
+  onSend: (text: string, execution: ExecutionDraft) => void
   onStop: () => void
   /** 错误卡片"重试"→ 重新生成（保留用户消息重跑） */
   onRegenerate: () => void
@@ -39,7 +42,7 @@ export interface ChatAreaProps {
 
 export function ChatArea(props: ChatAreaProps) {
   const {
-    detail, liveTurn, isStreaming, currentId, streamError, livePendingApproval,
+    detail, liveTurn, isStreaming, currentId, streamError, livePendingApproval, permission,
     onSend, onStop, onRegenerate, onApprovalResolved, onOpenSubtask,
   } = props
   const { sidebarOpen, toggleSidebar } = useShell()
@@ -117,7 +120,13 @@ export function ChatArea(props: ChatAreaProps) {
       )}
 
       {/* 输入框 */}
-      <Composer disabled={!currentId} streaming={isStreaming} onSend={onSend} onStop={onStop} />
+      <Composer
+        disabled={!currentId}
+        streaming={isStreaming}
+        permission={permission}
+        onSend={onSend}
+        onStop={onStop}
+      />
 
       {/* 审批弹窗：实时请求或刷新恢复的未决审批 */}
       {modalApproval && currentId && (

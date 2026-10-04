@@ -71,6 +71,12 @@ def build_options(tool_name: str, tool_input: dict, allow_full_access: bool = Tr
     且 content 按高危根命令安全约束生成（精确或前缀）。
     回放恢复路径（load_replay 的 pending_approval）也用它补齐选项。
     """
+    if tool_name == "exit_plan_mode":
+        # 计划审批：批准 / 要求修改（反馈会喂回模型改计划）
+        return [
+            {"option_id": "approve", "label": "批准计划，开始实现"},
+            {"option_id": "deny", "label": "要求修改"},
+        ]
     options: list[dict] = [{"option_id": "allowOnce", "label": "仅本次允许"}]
     if allow_full_access:
         options.append({"option_id": "fullAccess", "label": "完全访问"})

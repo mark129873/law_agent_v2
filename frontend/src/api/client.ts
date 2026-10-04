@@ -78,6 +78,22 @@ export function submitApproval(
   })
 }
 
+/** 执行状态（协作模式 + 计划标志）：模式切换器的初值与回显来源 */
+export interface PermissionState {
+  mode: string // build | edit | yolo
+  plan_enabled: boolean
+}
+
+export function getPermissionState(): Promise<PermissionState> {
+  return request('/api/permission/state')
+}
+
+/** 随提交生效的执行状态草稿（模式与模型一样属于下一次发送） */
+export interface ExecutionDraft {
+  mode?: string
+  plan_enabled?: boolean
+}
+
 // ---------- SSE 流式 ----------
 
 /**
@@ -87,17 +103,19 @@ export function submitApproval(
  * 2. 按空行分帧（SSE 规范），每帧含 event: 行与 data: 行；
  * 3. ": keepalive" 心跳帧直接跳过；
  * 4. onEvent 回调由 useSessionStream 提供，负责把事件并入界面状态。
+ * execution：模式随提交生效（缺省沿用当前执行状态）。
  * 断开/出错时抛出异常；turn 本身在后端继续跑完（刷新回看语义）。
  */
 export async function streamTurn(
   sessionId: string,
   text: string,
   onEvent: (event: SseEvent) => void,
+  execution?: ExecutionDraft,
 ): Promise<void> {
   const resp = await fetch(`/api/sessions/${sessionId}/turn`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...(execution ?? {}) }),
   })
   await consumeSse(resp, onEvent)
 }

@@ -11,7 +11,7 @@
 
 import { useCallback, useRef, useState } from 'react'
 
-import { streamRegenerate, streamTurn } from '../api/client'
+import { streamRegenerate, streamTurn, type ExecutionDraft } from '../api/client'
 import type { SseEvent, ToolStatus, TurnData, WorkItem } from '../types'
 
 export interface LiveTurnState {
@@ -227,9 +227,9 @@ export function useSessionStream(sessionId: string | null) {
     [appendItem],
   )
 
-  /** 发送用户消息：立即本地显示用户气泡，随后消费 SSE 流 */
+  /** 发送用户消息：立即本地显示用户气泡，随后消费 SSE 流（execution 随提交生效） */
   const send = useCallback(
-    async (text: string, onFinished?: () => void) => {
+    async (text: string, onFinished?: () => void, execution?: ExecutionDraft) => {
       if (!sessionId || isStreaming) return
       setError(null)
       setPendingApproval(null)
@@ -239,7 +239,7 @@ export function useSessionStream(sessionId: string | null) {
       turnRef.current = null
 
       try {
-        await streamTurn(sessionId, text, applyEvent)
+        await streamTurn(sessionId, text, applyEvent, execution)
       } catch (e) {
         // 连接中断：turn 在后端继续跑，界面提示可刷新回看
         setError(e instanceof Error ? e.message : '连接中断，可稍后刷新回看进度')

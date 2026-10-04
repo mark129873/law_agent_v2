@@ -18,7 +18,7 @@ import { Route, Routes, matchPath, useLocation, useNavigate, useParams } from 'r
 import { ChatArea } from './components/ChatArea'
 import { Sidebar } from './components/Sidebar'
 import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
-import { ApiError, createSession, getSessionDetail, stopTurn } from './api/client'
+import { ApiError, createSession, getPermissionState, getSessionDetail, stopTurn, type ExecutionDraft, type PermissionState } from './api/client'
 import { ShellContext, useShell } from './ShellContext'
 import { useSessionStream } from './hooks/useSessionStream'
 import { FileText, ListChecks, SidebarSimple, TerminalWindow, UsersThree } from '@phosphor-icons/react'
@@ -203,6 +203,17 @@ function SessionView({
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   // 右栏 subtask 面板：点击卡片打开（持有同一 work item 引用，流式更新可见）
   const [activeSubtask, setActiveSubtask] = useState<SubtaskItem | null>(null)
+  // 执行状态（模式/计划标志）：初值来自服务端，turn 收口后刷新（完全访问/计划工具会改它）
+  const [permission, setPermission] = useState<PermissionState>({ mode: 'build', plan_enabled: false })
+
+  const refreshPermission = useCallback(() => {
+    getPermissionState().then(setPermission).catch(() => {})
+  }, [])
+
+  // 挂载时拉一次执行状态
+  useEffect(() => {
+    refreshPermission()
+  }, [refreshPermission])
 
   // SSE 流式状态（只在本会话上生效）；liveTurn 即实时轮次
   const {
@@ -235,7 +246,7 @@ function SessionView({
     }
   }, [sessionId, navigate, draftIdsRef])
 
-  /** turn 收口后：重新拉详情（耗时等切换为落盘权威值）并清掉实时轮次 */
+  /** turn 收口后：重新拉详情（耗时等切换为落盘权威值）并清掉实时轮次；同步执行状态 */
   const refreshAfterTurn = useCallback(async () => {
     try {
       setDetail(await getSessionDetail(sessionId))
@@ -243,14 +254,15 @@ function SessionView({
       /* draft 会话首条消息失败时详情仍不存在，忽略 */
     }
     clearTurn()
-  }, [sessionId, clearTurn])
+    refreshPermission()
+  }, [sessionId, clearTurn, refreshPermission])
 
-  /** 发送消息：流结束后刷新详情与列表 */
+  /** 发送消息：模式随提交生效；流结束后刷新详情与列表 */
   const handleSend = useCallback(
-    (text: string) => {
+    (text: string, execution: ExecutionDraft) => {
       void send(text, () => {
         void refreshAfterTurn()
-      })
+      }, execution)
     },
     [send, refreshAfterTurn],
   )
@@ -277,6 +289,7 @@ function SessionView({
         currentId={sessionId}
         streamError={streamError}
         livePendingApproval={pendingApproval}
+        permission={permission}
         onSend={handleSend}
         onStop={handleStop}
         onRegenerate={handleRetry}

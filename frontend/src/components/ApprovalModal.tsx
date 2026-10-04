@@ -15,7 +15,12 @@ import { Warning } from '@phosphor-icons/react'
 import { useEffect, useState } from 'react'
 
 import { submitApproval } from '../api/client'
+import { MarkdownWithCopy } from './MessageItem'
 import type { SessionDetail } from '../types'
+
+const isPlanApproval = (approval: PendingApproval) =>
+  approval.tool === 'exit_plan_mode' &&
+  typeof (approval.input as { plan?: string } | null)?.plan === 'string'
 
 export interface ApprovalOption {
   option_id: string
@@ -84,10 +89,16 @@ export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModal
           （{approval.reason}）
         </p>
 
-        {/* 参数原文 */}
-        <pre className="mt-3 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-zinc-50 p-2.5 text-[12px] text-zinc-600">
-          {JSON.stringify(approval.input ?? {}, null, 2)}
-        </pre>
+        {/* 计划审批：渲染 markdown 计划；其余显示参数原文 */}
+        {isPlanApproval(approval) ? (
+          <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-zinc-200 p-3">
+            <MarkdownWithCopy text={String((approval.input as { plan?: string })?.plan ?? '')} />
+          </div>
+        ) : (
+          <pre className="mt-3 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-zinc-50 p-2.5 text-[12px] text-zinc-600">
+            {JSON.stringify(approval.input ?? {}, null, 2)}
+          </pre>
+        )}
 
         {/* 动态选项列表（role=listbox，序号即快捷键） */}
         <div role="listbox" className="mt-3 space-y-1.5">

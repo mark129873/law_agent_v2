@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    """构造 FastAPI 实例（独立成函数方便测试复用）。"""
+    """构造 FastAPI 应用（独立成函数方便测试复用）。"""
     app = FastAPI(title="个人助手 harness", lifespan=lifespan)
     app.include_router(sessions_api.router)
 
@@ -46,6 +46,13 @@ def create_app() -> FastAPI:
     def health() -> dict:
         """健康检查：不依赖 LLM 配置，进程活着即返回 ok。"""
         return {"status": "ok"}
+
+    @app.get("/api/permission/state")
+    def permission_state() -> dict:
+        """当前执行状态（协作模式+计划标志）：前端模式切换器的初值来源。"""
+        from app.sessions import execution_state
+
+        return execution_state.load_execution_state(settings.data_dir)
 
     return app
 

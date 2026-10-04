@@ -3,18 +3,20 @@
 ## 当前已验证
 
 - 现在明确可用的部分：
-  - 后端 12 功能 + 前端 8 功能：BE-010(Langfuse) deprecated，BE-012(model-io JSONL)/BE-013(用量聚合) passing
+  - 后端 14 功能 + 前端 8 功能：BE-010(Langfuse) deprecated，BE-012(model-io JSONL)/BE-013(用量聚合)/**BE-014(权限管理体系 ZCode 复刻)** passing
+  - **权限体系**（ARCHITECTURE §4.2）：协作模式 build(变更前确认)/edit(自动编辑)/yolo(完全访问) 随提交生效（execution_state.json）+ planEnabled 独立标志；工具能力声明 + bash 只读命令降级；规则系统（permission_rules.json，deny/allow，`cmd:*` 前缀/通配/精确，高危根命令退化整条精确）；审批动态选项（allowOnce/fullAccess/allowAlways/deny + freeText 反馈喂回模型，子代理抑制 fullAccess）；计划模式（enter/exit_plan_mode 工具、计划文件 data/plans/、计划审批对话、系统提示词计划段注入、Composer 模式切换器随提交生效）
   - 观测三层分工（ARCHITECTURE §3.0）：SQLite 会话事实（含 turn 级 input/output/context 三级 token 字段与会话双列累计）+ model-io JSONL（逐调用全量快照，`log/`）+ app.log 工程事件
   - compact 预算已激活真实 input（deps.last_input_tokens 由主循环 usage 事件喂入，原死路径）；前端 TokenBadge 显示真实上下文占用（context_used/context_window+百分比）
   - regenerate 回滚后由 recalc_session_usage 重算双列（修复被删轮 token 双算的潜伏 bug）
+  - 权限专项 E2E 4 项通过：计划全流程（进入→只读→exit→批准→实现）、edit 自动编辑、完全访问一键切 yolo、总是允许规则落盘 `echo:*`（截图 tmp/gui-verify/pm-*.png）；高危真实删除/越界/恢复项列清单留用户手测
   - **回放审批留痕去重**：同一 request_id 只渲染最终状态一张卡（修复回放出现"等待批准"幽灵卡，与实时流单卡翻转一致；DB 仍双写事实）
   - **侧栏新建草稿弹回修复**：Sidebar 创建路径漏登记 draftIdsRef 导致草稿页 404 弹回首页，已统一收敛到 handleDraftCreated（App.tsx）
   - **UI 质感升级**：Composer 一体化浮动输入卡、欢迎页重排、侧栏选中竖条、token 层（tabular-nums/细滚动条/入场动画/圆角体系）、审批弹窗打磨——圆角与强调色体系见 ARCHITECTURE §7
-  - **E2E 全量回归通过**：mock LLM（tmp/mock_llm_server.py，零成本）驱动真实前后端 17 项场景——流式/markdown/工具执行/任务板/subtask 双路径/审批批准+拒绝/错误重试/停止/409/刷新恢复/跨会话并行/删除/Enter 系/model-io/用量聚合，全部通过（截图 tmp/gui-verify/e2e-*.png）
+  - **E2E 全量回归通过**：mock LLM（tmp/mock_llm_server.py，零成本）驱动真实前后端 17+4 项场景——流式/markdown/工具执行/任务板/subtask 双路径/审批批准+拒绝/错误重试/停止/409/刷新恢复/跨会话并行/删除/Enter 系/model-io/用量聚合，全部通过（截图 tmp/gui-verify/e2e-*.png）
   - 前端已有路由：`/` 欢迎页、`/session/:id` 会话视图；刷新/直链按地址恢复回放；未知与已删地址回首页，应用内新建的草稿留在空对话态
   - 三栏壳层对齐 ZCode 工作台语义：左栏头部按钮开合（localStorage 记忆 `ui.sidebar`），右栏 subtask 面板点卡打开/X 收起/再点恢复
   - 前端分包：markdown（react-markdown+highlight）在异步包，主包 284kB，无 Vite 告警
-- 这轮实际跑过的验证：`uv run pytest -q` **70 passed**（model-io 3 例 + 用量聚合 2 例新增）；`npm run build` 无告警；清库真实启动 + fixture 会话浏览器实测徽标（tmp/gui-verify/v4-usage-badge.png）；UI 回归靠截图视觉验收（本机 IAB 的 Playwright 点击不可靠，用 evaluate 触发）
+- 这轮实际跑过的验证：`uv run pytest -q` **83 passed**（权限相关 +12）；`npm run build` 无告警；清库真实启动 + fixture 会话浏览器实测徽标（tmp/gui-verify/v4-usage-badge.png）；UI 回归靠截图视觉验收（本机 IAB 的 Playwright 点击不可靠，用 evaluate 触发）
 
 ## 本轮改动
 

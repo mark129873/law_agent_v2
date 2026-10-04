@@ -104,6 +104,14 @@
       "testedAt": "2026-10-01"
     },
     {
+      "id": "BE-014",
+      "name": "权限管理体系(ZCode 复刻)",
+      "description": "协作模式随提交生效(build 变更前确认/edit 自动编辑/yolo 完全访问+planEnabled 独立标志)+工具能力声明(bash 只读降级)+规则系统(deny/allow/ask,cmd:* 前缀/通配/精确,高危根命令退化精确)+计划模式(enter/exit_plan_mode+计划文件+审批对话)+审批动态选项(allowOnce/fullAccess/allowAlways/deny+freeText 反馈)",
+      "status": "passing",
+      "evidence": "pytest 83 passed(+12: 评估矩阵/规则匹配/Bash降级/高危退化/plan工具流/系统提示注入/选项流/fullAccess切yolo/allowAlways落盘/未知兜底)；E2E 截图 pm-1~5：模式切换器、计划审批弹窗(markdown 渲染)、四选项弹窗(完全访问警示/规则预览)、批准后 planEnabled 复位与计划文件落盘、edit 模式 write_file 免弹窗、总是允许规则落盘 echo:*；高危真实删除项留用户手测",
+      "testedAt": "2026-10-04"
+    },
+    {
       "id": "BE-013",
       "name": "用量聚合(SQLite)",
       "description": "turn 事实 data 增加 input_tokens(输入累计)/context_tokens(最近一步 input≈上下文占用)；session 表 +input_tokens 列(与 tokens_used 输出并排)；主循环喂 deps.last_input_tokens 激活 compact 真实预算；recalc_session_usage 接线到 regenerate 修复被删轮双算；TokenBadge 改真实占用口径(used/window+百分比)；part 级分摊与独立 usage 库明确不做",
