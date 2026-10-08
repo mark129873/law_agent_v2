@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { CaretRight, CheckCircle, CircleHalf, FolderOpen, SquaresFour, StopCircle, TerminalWindow, UsersThree, WarningCircle } from '@phosphor-icons/react'
 
 import { fmtDuration } from '../utils/format'
 import {
@@ -71,36 +72,38 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
           : `已停止${shownMs ? ` ${fmtDuration(shownMs)}` : ''}`
 
   return (
-    <div className="animate-enter space-y-2">
+    <div className="animate-enter space-y-5">
       {/* 用户消息（块外、块头上方） */}
       {turn.user_message && <UserBubble text={turn.user_message.text} />}
 
       {/* 工作块：过程条目 ≥1 条时才渲染 */}
       {turn.work_items.length > 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white">
+        <div className="work-card overflow-hidden">
           {/* 块头：状态 + 耗时 + 折叠开关 */}
           <button
             type="button"
             onClick={() => setOpen(!open)}
             aria-expanded={open}
-            className="flex w-full items-center gap-2 rounded-xl px-3.5 py-2.5 text-left transition hover:bg-zinc-50"
+            className="flex w-full items-center gap-2.5 rounded-xl px-4 py-3 text-left transition hover:bg-zinc-100/60"
           >
+            {running ? <CircleHalf size={17} className="text-accent-700" /> : turn.state === 'success' ? <CheckCircle size={17} className="text-accent-700" /> : turn.state === 'failed' ? <WarningCircle size={17} className="text-red-700" /> : <StopCircle size={17} className="text-amber-700" />}
             <span
               className={`text-[13px] font-medium ${
-                running ? 'text-sky-600' : turn.state === 'success' ? 'text-zinc-700' : 'text-amber-600'
+                running ? 'text-accent-700' : turn.state === 'success' ? 'text-zinc-700' : 'text-amber-700'
               }`}
             >
               {running && (
-                <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500 align-middle motion-reduce:animate-none" />
+                <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent-500 align-middle motion-reduce:animate-none" />
               )}
               {headerText}
             </span>
-            <span className={`ml-auto text-zinc-400 transition ${open ? 'rotate-90' : ''}`}>›</span>
+            <span className="ml-auto text-[11px] text-zinc-500">{turn.work_items.length} 项记录</span>
+            <CaretRight size={14} className={`text-zinc-500 transition ${open ? 'rotate-90' : ''}`} />
           </button>
 
           {/* 块内条目：按时间序平铺 */}
           {open && (
-            <div className="space-y-2 border-t border-zinc-100 px-3.5 py-3">
+            <div className="space-y-3 border-t border-zinc-200/70 px-3 py-3">
               {aggregateItems(turn.work_items).map((entry) =>
                 entry.kind === 'group' ? (
                   <GroupCard key={`g-${entry.groupType}-${entry.items[0]?.id}`} group={entry} />
@@ -121,20 +124,11 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
       {/* 最终回复（块外完整渲染）；停止后保留的部分输出也在这里展示 */}
       {turn.final_text && (
         <div className="group px-1">
-          <MarkdownWithCopy text={turn.final_text} streaming={running} />
+          <div className="mb-4 flex items-center gap-2 text-[12px] font-semibold text-zinc-600"><SquaresFour size={16} weight="fill" className="text-accent-700" />个人助手</div>
+          <MarkdownWithCopy text={turn.final_text} streaming={running} onRegenerate={onRegenerate} />
           <div className="mt-1 flex items-center gap-2">
             {turn.state === 'stopped' && (
-              <p className="text-[11px] text-amber-600">已停止，以上为已生成的部分</p>
-            )}
-            {/* 重新生成：仅结束态且非重跑进行中出现（悬停显示） */}
-            {!running && onRegenerate && (
-              <button
-                type="button"
-                onClick={onRegenerate}
-                className="opacity-0 text-[11px] text-zinc-400 transition hover:text-zinc-700 group-hover:opacity-100"
-              >
-                重新生成
-              </button>
+              <p className="text-[11px] text-amber-700">已停止，以上为已生成的部分</p>
             )}
           </div>
         </div>
@@ -195,16 +189,17 @@ function GroupCard({ group }: { group: WorkGroup }) {
   const failed = group.items.some((x) => x.status === 'failed')
   const label = group.groupType === 'explore' ? (running ? '探索中' : '探索') : running ? '执行中' : '执行'
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white">
+    <div className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="flex w-full items-center gap-2.5 px-3 py-3 text-left hover:bg-zinc-50"
         aria-expanded={open}
       >
-        <span className={`text-[13px] font-medium ${running ? 'text-sky-600' : 'text-zinc-700'}`}>{label}</span>
-        <span className="flex-1 text-[12px] text-zinc-400">{group.items.length} 项操作</span>
-        <span className={`text-zinc-300 transition ${open ? 'rotate-90' : ''}`}>›</span>
+        {group.groupType === 'explore' ? <FolderOpen size={17} className="text-zinc-500" /> : <TerminalWindow size={17} className="text-zinc-500" />}
+        <span className={`text-[13px] font-medium ${running ? 'text-accent-700' : 'text-zinc-700'}`}>{label}</span>
+        <span className="flex-1 text-[12px] text-zinc-500">{group.items.length} 项操作</span>
+        <CaretRight size={14} className={`text-zinc-500 transition ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
         <div className="space-y-2 border-t border-zinc-100 px-3 py-2">
@@ -249,9 +244,9 @@ function WorkItemRow({
             <p
               className={`text-[13px] ${
                 item.status === 'auto'
-                  ? 'text-sky-700'
+                  ? 'text-accent-700'
                   : item.status === 'approved'
-                    ? 'text-emerald-700'
+                    ? 'text-accent-700'
                     : 'text-amber-800'
               }`}
             >
@@ -260,12 +255,12 @@ function WorkItemRow({
             <span
               className={`shrink-0 text-[11px] ${
                 item.status === 'auto'
-                  ? 'text-sky-600'
+                  ? 'text-accent-700'
                   : item.status === 'approved'
-                    ? 'text-emerald-600'
+                    ? 'text-accent-700'
                     : item.status === 'denied'
                       ? 'text-red-600'
-                      : 'text-amber-600'
+                      : 'text-amber-700'
               }`}
             >
               {item.status === 'auto'
@@ -293,16 +288,17 @@ function WorkItemRow({
         <button
           type="button"
           onClick={() => onOpenSubtask?.(item)}
-          className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left transition hover:bg-zinc-50"
+          className="flex w-full items-center gap-2.5 rounded-xl border border-zinc-200/80 bg-white px-3 py-3 text-left transition hover:bg-zinc-50"
         >
-          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-white">SubAgent</span>
+          <UsersThree size={17} className="shrink-0 text-accent-700" />
+          <span className="text-[12px] font-medium text-accent-700">子助手</span>
           <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-700">{item.goal}</span>
           <span
             className={`shrink-0 text-[11px] ${
-              item.status === 'running' ? 'text-sky-600' : item.status === 'failed' ? 'text-red-600' : 'text-emerald-600'
+              item.status === 'running' ? 'text-accent-700' : item.status === 'failed' ? 'text-red-600' : 'text-accent-700'
             }`}
           >
-            {item.status === 'running' ? '执行中' : item.status === 'failed' ? '执行失败' : '已完成'}
+            {item.status === 'running' ? '执行中' : item.status === 'failed' ? '执行失败' : item.status === 'stopped' ? '已停止' : '已完成'}
           </span>
         </button>
       )

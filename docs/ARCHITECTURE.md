@@ -97,3 +97,5 @@
 - 预算函数支持真实usage优先；路由未继承上一轮计量，入口通常按字符/4估算。
 - 仅摘要替代模型历史，旧消息仍在库中；microcompact会覆盖旧工具输出，不另行归档。
 - 尚无prompt_too_long专用压缩重试；摘要调用记录/用量缺口见§2.2。
+
+前端仅消费会话回放与SSE：React组件保留三栏职责；视觉由[index.css](../frontend/src/index.css)、[workspace.css](../frontend/src/workspace.css)统一，行为与暖黄视觉规范见[PRODUCT](PRODUCT.md)。

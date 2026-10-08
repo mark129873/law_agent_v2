@@ -1,0 +1,122 @@
+/* 工作台视觉规则：用少量共享类统一页面，不在每个组件里复制整套样式。 */
+:root {
+  color-scheme: light;
+  --workspace-line: #e8e6e0;
+  --workspace-rail: #f5f4f1;
+}
+
+body { background: #fff; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+button, a, textarea { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid #976615; outline-offset: 3px; }
+::selection { background: #f8ebc8; }
+
+/* 固定顶栏与底部输入，中间独立滚动；min-height 防止长文本撑开布局。 */
+.app-shell { height: 100dvh; overflow: hidden; }
+.workspace-header {
+  display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+  height: 68px; padding: 0 28px; border-bottom: 1px solid var(--workspace-line);
+  background: #fff;
+}
+.icon-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; color: #52525b;
+  transition: background 150ms, color 150ms;
+}
+.icon-button:hover { background: #ebe8e1; color: #18181b; }
+.primary-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  min-height: 42px; padding: 0 18px; border-radius: 12px; white-space: nowrap;
+  background: #f1cb76; color: #352713; font-size: 14px; font-weight: 600;
+  transition: background 150ms, box-shadow 150ms;
+}
+.primary-button:hover { background: #e8ba58; box-shadow: 0 3px 10px #97661518; }
+.primary-button:disabled { opacity: .55; box-shadow: none; }
+.brand-mark {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 34px; height: 34px; border-radius: 12px; background: #f1cb76; color: #352713;
+}
+
+.sidebar-panel { background: var(--workspace-rail); }
+.sidebar-scrim { display: none; }
+.session-row { border-radius: 12px; transition: background 150ms; }
+.session-row:hover { background: #ebe8e1; }
+.session-row.is-selected { background: #fff; box-shadow: 0 1px 4px #30261810; }
+.session-actions { opacity: 0; transition: opacity 150ms; }
+.session-row:hover .session-actions,
+.session-row:focus-within .session-actions { opacity: 1; }
+.welcome-content { width: 100%; max-width: 760px; margin: auto; padding: 64px 32px; }
+.welcome-title { font-size: clamp(30px, 3vw, 44px); line-height: 1.35; letter-spacing: -.04em; }
+.capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px 44px; }
+
+/* 输入优先，权限在次级操作行；焦点通过外框表达，避免双重边框。 */
+.composer-shell { flex-shrink: 0; padding: 12px 32px 20px; background: #fff; }
+.composer-card {
+  max-width: 800px; margin: 0 auto; padding: 16px;
+  border: 1px solid #ddd8ce; border-radius: 20px; background: #fff;
+  box-shadow: 0 4px 20px #30261808; transition: border-color 150ms, box-shadow 150ms;
+}
+.composer-card:focus-within { border-color: #a5751b; box-shadow: 0 0 0 3px #9766150a, 0 4px 20px #30261808; }
+.composer-input {
+  width: 100%; min-height: 70px; max-height: 200px; resize: none;
+  background: transparent; font-size: 15px; line-height: 1.7; color: #27272a;
+}
+.composer-input::placeholder { color: #71717a; }
+.composer-input:focus { outline: none; }
+.floating-menu { border: 1px solid var(--workspace-line); box-shadow: 0 8px 36px #30261818; }
+.work-card { border: 1px solid var(--workspace-line); background: #fbfaf8; border-radius: 12px; }
+/* 弹窗容器接住初始焦点；真正的按钮、输入框仍显示键盘焦点圈。 */
+.approval-dialog:focus { outline: none; }
+
+/* Tailwind 重置会去掉原生标题、列表和表格样式，所以正文单独恢复可读的层次。 */
+.markdown-body { color: #35312b; line-height: 1.85; overflow-wrap: anywhere; }
+.markdown-body > * + * { margin-top: 14px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4 { font-weight: 650; color: #26231e; line-height: 1.5; margin-top: 24px; margin-bottom: 10px; }
+.markdown-body h1 { font-size: 24px; }
+.markdown-body h2 { font-size: 21px; }
+.markdown-body h3 { font-size: 17px; }
+.markdown-body h4 { font-size: 15px; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body ul { list-style: disc; padding-left: 24px; }
+.markdown-body ol { list-style: decimal; padding-left: 24px; }
+.markdown-body li + li { margin-top: 6px; }
+.markdown-body li > ul, .markdown-body li > ol { margin-top: 6px; }
+.markdown-body a { color: #976615; text-decoration: underline; text-underline-offset: 3px; }
+.markdown-body blockquote { border-left: 3px solid #efd99f; padding: 8px 16px; color: #52525b; background: #fbf8f0; border-radius: 0 8px 8px 0; }
+.markdown-body code { font-family: Consolas, 'SFMono-Regular', monospace; font-size: .86em; background: #f4f1e9; padding: 2px 5px; border-radius: 5px; }
+.markdown-body pre { overflow-x: auto; border: 1px solid var(--workspace-line); border-radius: 12px; background: #faf8f3; padding: 16px; line-height: 1.65; }
+.markdown-body pre code { display: block; padding: 0; background: none; white-space: pre; }
+.markdown-body .table-scroll { overflow-x: auto; border: 1px solid var(--workspace-line); border-radius: 12px; }
+.markdown-body table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.markdown-body th { background: #f5f2ea; color: #514838; font-weight: 600; text-align: left; white-space: nowrap; }
+.markdown-body th, .markdown-body td { padding: 10px 14px; border-bottom: 1px solid var(--workspace-line); }
+.markdown-body tr:last-child td { border-bottom: none; }
+.markdown-body hr { border: 0; border-top: 1px solid var(--workspace-line); margin: 24px 0; }
+.markdown-body img { max-width: 100%; border-radius: 12px; }
+.markdown-body .hljs-keyword, .markdown-body .hljs-selector-tag { color: #805416; }
+.markdown-body .hljs-string, .markdown-body .hljs-attribute { color: #856021; }
+.markdown-body .hljs-number, .markdown-body .hljs-literal { color: #a65223; }
+.markdown-body .hljs-comment { color: #776b57; }
+
+/* 窄窗口只改变面板摆放，不增添另一套导航和功能。 */
+@media (max-width: 1100px) {
+  .subtask-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 45; width: min(400px, 100%); box-shadow: -12px 0 36px #30261818; }
+}
+@media (max-width: 760px) {
+  .sidebar-panel { position: fixed; inset: 0 auto 0 0; z-index: 40; box-shadow: 12px 0 36px #30261818; }
+  .sidebar-scrim { display: block; position: fixed; inset: 0; z-index: 39; background: #30261830; }
+  .workspace-header { height: 60px; padding: 0 16px; gap: 10px; }
+  .welcome-content { padding: 40px 24px; }
+  .capability-grid { gap: 26px 20px; }
+  .composer-shell { padding: 8px 16px 14px; }
+  .composer-card { padding: 14px; }
+  .session-actions { opacity: 1; }
+}
+@media (max-width: 420px) {
+  .capability-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

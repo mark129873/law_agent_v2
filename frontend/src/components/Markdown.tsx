@@ -5,16 +5,20 @@
  */
 
 import { useState } from 'react'
+import { ArrowClockwise, Check, Copy } from '@phosphor-icons/react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 
 /** 最终回复 / 中间文本：Markdown 渲染 + 悬停复制按钮（default 导出供 lazy 引用） */
 export default function MarkdownWithCopy({
   text,
   streaming = false,
+  onRegenerate,
 }: {
   text: string
   streaming?: boolean
+  onRegenerate?: () => void
 }) {
   const [copied, setCopied] = useState(false)
 
@@ -29,20 +33,26 @@ export default function MarkdownWithCopy({
   }
 
   return (
-    <div className="group relative">
+    <div className="group relative min-w-0">
       {/* 正文：markdown 渲染；生成中尾部加光标 */}
-      <div className={`text-[15px] leading-relaxed ${streaming ? 'stream-cursor' : ''}`}>
-        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{text}</ReactMarkdown>
+      <div className={`markdown-body text-[15px] ${streaming ? 'stream-cursor' : ''}`}>
+        {/* GFM 负责表格与任务列表；横向滚动容器防止宽表格撑破对话区。 */}
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{
+          table: ({ children }) => <div className="table-scroll"><table>{children}</table></div>,
+        }}>{text}</ReactMarkdown>
       </div>
-      {/* 复制按钮：悬停出现 */}
+      {/* 正文操作放在同一行；键盘聚焦时同样可见，生成中不提供重跑。 */}
+      <div className="mt-3 flex items-center gap-1 opacity-100 transition focus-within:opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
       <button
         type="button"
         onClick={handleCopy}
-        className="absolute -top-1 right-0 hidden rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] text-zinc-500 transition hover:text-zinc-800 group-hover:block"
-        aria-label="复制"
+        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800"
+        aria-label={copied ? '已复制' : '复制回复'}
       >
-        {copied ? '已复制' : '复制'}
+        {copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}
       </button>
+      {!streaming && onRegenerate && <button type="button" onClick={onRegenerate} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800"><ArrowClockwise size={14} />重新生成</button>}
+      </div>
     </div>
   )
 }

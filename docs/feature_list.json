@@ -1,6 +1,13 @@
 {
   "project": "law_agent_v2",
   "description": "个人助手harness",
+  "frontend_review": {
+    "date": "2026-10-08",
+    "scope": "暖金黄工作台：导航、欢迎页、输入、工作卡、子助手、审批与Markdown；保留路由和后端契约",
+    "status": "passing",
+    "evidence": "build通过，主包366.14kB；lint 0错误/5条既有警告；audit 0漏洞；内存API/假SSE浏览器验收发送、停止、重跑、复制、模式/计划、审批数字防误触/焦点/恢复、工作卡/子助手、404/草稿刷新、失败提示及390px布局；截图tmp/ui-redesign/",
+    "boundaries": "未连接真实后端/数据库/模型；后端87项验证见refactoring_review；既有静态缺口保持记录"
+  },
   "refactoring_review": {
     "date": "2026-10-08",
     "scope": "清理未使用代码；共用turn装配、消息/部件查询、模型调用记录与审批等待；保留九机制边界",

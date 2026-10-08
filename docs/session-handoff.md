@@ -1,20 +1,22 @@
 # 会话交接
 
-## 本轮（2026-10-08，Session 007）
+## 本轮（2026-10-08，Session 008）
 
 | 项 | 结果 |
 |---|---|
-| 目标 | 后端简化；保留九机制现有行为与未接通入口 |
-| 范围 | turn装配、消息/部件查询、响应聚合、model-io记录、审批等待及未使用代码 |
-| 复用 | model_call聚合响应并finally记录；authorize_tool统一权限与审批工时；主/子循环保持独立 |
-| 边界 | schema、权限顺序、工具范围、事件、压缩与重跑语义保持；真实运行数据未改 |
-| 机制差异 | Web未实现GoalLoop、任务板三轮提醒；技能目录函数未注入系统提示词 |
-| 验证 | 基线83 passed；简化后全量87 passed，新增4例；空库/假LLM，.tmp-data无残留；未启动真实服务 |
-| 功能清单 | 保留20项passing、1项deprecated及历史证据；refactoring_review记录本轮验证 |
+| 目标 | 商业产品质感的暖黄助手工作台；用户最终要求取消绿色 |
+| 范围 | 欢迎/导航/输入/工作卡/子面板/审批/Markdown；React状态职责、路由和后端契约保持 |
+| 视觉 | 白色、微暖灰、石墨文字、暖金黄；系统字体、统一间距/圆角/焦点；窄窗口面板覆盖 |
+| 交互 | 去除嵌套按钮；审批焦点循环、数字反馈防误触、防重复提交；请求失败可见 |
+| 验证 | build通过，主包366.14kB；lint 0错误/5条既有警告；audit 0漏洞；内存API/假SSE浏览器与截图验收通过 |
+| 数据 | 未连接真实后端/数据库/模型，真实data/workspace/log未改；未复跑真实服务E2E |
+| 证据 | tmp/ui-redesign/；暖黄最终图welcome-warm.jpg、chat-warm.jpg；完整验证见progress Session 008 |
+| 功能清单 | 20项passing、1项deprecated及历史证据保留；frontend_review记录UI验收 |
+| 后端简化 | Session 007已提交cc5874d；共用turn装配/查询/模型记录/审批工时，生产代码净减84行；隔离空库+假LLM全量87 passed |
 
 ## 历史验证
 
-- 前端build、权限专项E2E为Session 005历史证据；本轮后端pytest已重跑。
+- 真实服务权限E2E为Session 005历史证据；后端pytest为Session 007，前端构建/模拟交互为Session 008。
 - 已有能力：会话/回放、工具、审批/计划、子助手/任务板/技能、压缩、重新生成、日志/用量。
 - 原始证据见 feature_list.json 与 progress.md Session 005。
 
@@ -31,11 +33,11 @@
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
 | 规则/路径 | ask桶未加载；PowerShell无系统沙箱，glob未过safe_path | execution_state.py、permission_service.py、tools.py |
 
-既有限制：长会话全量回放；本机IAB点击自动化不稳定。本轮简化无blocker。
+既有限制：长会话全量回放；5条非阻断前端lint警告。本轮无blocker。
 
 ## 下一步
 
-1. 用户已追加前端视觉重构：使用design-taste-frontend技能，先审视现有页面，再设计与验收。
+1. 已完成后端简化与暖黄前端重构；下一轮先核对上述Harness缺口。
 2. 分项修复、补必要验证；既有passing不覆盖本轮发现的缺口。
 3. 保留契约：
    - 四表、稳定sequence、单Queue、审批工时、regenerate用量重算。

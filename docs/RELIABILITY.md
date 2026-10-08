@@ -19,6 +19,7 @@
 | pytest | 导入app前注入DATA_DIR到backend/tests/.tmp-data/；MODELIO_DIR到其下modelio/ |
 | 每测 | 空目录/空库；结束释放SQLite/日志句柄，再删.tmp-data/ |
 | 手测/E2E | 启动真实后端前清空backend/data/；仅构造测试数据 |
+| 纯UI验收 | 可用独立内存API/假SSE；不连接真实后端、数据库或模型；截图明确为模拟数据 |
 | 收尾 | .tmp-data/无残留；pytest不触碰真实data/workspace/log |
 
 **不迁移数据库**：改models.py表结构→删除backend/data/→重启建表；会话、工作区、规则、计划一并清除。

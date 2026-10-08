@@ -21,7 +21,8 @@ import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
 import { ApiError, createSession, getPermissionState, getSessionDetail, stopTurn, type ExecutionDraft, type PermissionState } from './api/client'
 import { ShellContext, useShell } from './ShellContext'
 import { useSessionStream } from './hooks/useSessionStream'
-import { FileText, ListChecks, SidebarSimple, TerminalWindow, UsersThree } from '@phosphor-icons/react'
+import { ArrowRight, FileText, ListChecks, SidebarSimple, SquaresFour, TerminalWindow, UsersThree } from '@phosphor-icons/react'
+import './workspace.css'
 import type { SessionDetail, SessionItem } from './types'
 
 /** 左栏开合的本地记忆键：ZCode 同语义（isSidebarVisible 持久化） */
@@ -46,7 +47,9 @@ function AppShell() {
   // 左栏开合：初始值读本地记忆，切换时写回（ZCode 工作台同款持久化）
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
-      return localStorage.getItem(SIDEBAR_STORAGE_KEY) !== 'collapsed'
+      const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
+      // 首次在窄窗口打开时先展示正文；已有开合偏好仍优先使用。
+      return saved ? saved !== 'collapsed' : !window.matchMedia('(max-width: 760px)').matches
     } catch {
       return true // localStorage 不可用（隐私模式等）：默认展开
     }
@@ -91,7 +94,7 @@ function AppShell() {
     /* 三栏布局的 flex 容器：侧栏与路由出口（中/右栏）必须并排，
        不能换成 Fragment——容器一旦消失，侧栏与主区会垂直堆叠（实测踩过） */
     <ShellContext.Provider value={{ sidebarOpen, toggleSidebar }}>
-      <div className="flex h-full">
+      <div className="app-shell flex">
       {/* 左栏：会话列表 */}
       <Sidebar
         sessions={sessions}
@@ -116,48 +119,60 @@ function AppShell() {
 }
 
 /** `/` 欢迎页：未选会话时的空状态（原来在 ChatArea 里的未选中分支） */
-function WelcomePage({ onNewSession }: { onNewSession: () => void }) {
+function WelcomePage({ onNewSession }: { onNewSession: () => Promise<void> }) {
   const { sidebarOpen, toggleSidebar } = useShell()
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // 欢迎页与侧栏都可建草稿；这里显示失败原因，避免点击后无响应。
+  const start = async () => {
+    if (creating) return
+    setCreating(true)
+    setError(null)
+    try { await onNewSession() }
+    catch (e) { setError(e instanceof Error ? e.message : '新建会话失败，请重试') }
+    finally { setCreating(false) }
+  }
+  const capabilities = [
+    { icon: FileText, title: '文件工作', text: '阅读、整理与修改工作区文件' },
+    { icon: TerminalWindow, title: '命令执行', text: '按你的授权，在本地运行命令' },
+    { icon: ListChecks, title: '任务计划', text: '拆分目标，记录每一步工作进展' },
+    { icon: UsersThree, title: '子助手协作', text: '将独立工作交给专注的子助手' },
+  ]
   return (
-    <main className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 bg-zinc-50 px-8">
-      {/* 左栏开合按钮：常驻左上角（侧栏收起后仍可找回） */}
-      <div className="absolute left-3 top-3">
+    <main className="flex min-w-0 flex-1 flex-col bg-white">
+      <header className="workspace-header">
         <SidebarToggle sidebarOpen={sidebarOpen} onToggle={toggleSidebar} />
-      </div>
-
-      <div className="animate-enter flex max-w-lg flex-col items-center text-center">
-        <h1 className="text-[26px] font-semibold tracking-tight text-zinc-900">个人助手</h1>
-        <p className="mt-2.5 text-[14px] leading-relaxed text-zinc-500">
-          能读文件、跑命令、管任务、派子助手的本地工作伙伴
-        </p>
-
-        {/* 能力内联提示：单行图标+词，不做卡片阵列 */}
-        <div className="mt-5 flex items-center gap-4 text-[12px] text-zinc-400">
-          <span className="inline-flex items-center gap-1.5">
-            <FileText size={13} weight="regular" /> 读写文件
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <TerminalWindow size={13} weight="regular" /> 执行命令
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <ListChecks size={13} weight="regular" /> 管理任务
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <UsersThree size={13} weight="regular" /> 派子助手
-          </span>
+        <span className="text-[13px] font-medium text-zinc-600">工作台</span>
+      </header>
+      <div className="flex flex-1 overflow-y-auto">
+        <div className="welcome-content animate-enter">
+          <div className="mb-7 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-50 text-accent-700">
+            <SquaresFour size={28} weight="duotone" />
+          </div>
+          <h1 className="welcome-title font-semibold text-zinc-900">从一个目标开始。</h1>
+          <p className="mt-4 max-w-md text-[15px] leading-7 text-zinc-600">
+            告诉助手你想完成什么。探索文件、安排任务，<br className="hidden sm:block" />
+            一起把下一步工作推进下去。
+          </p>
+          <button type="button" onClick={() => void start()} disabled={creating} className="primary-button mt-7">
+            {creating ? '正在新建…' : '新建会话'} <ArrowRight size={17} weight="bold" />
+          </button>
+          {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+          {/* 能力是说明文字，不伪装成尚未实现的入口。 */}
+          <div className="capability-grid mt-14 border-t border-zinc-200/80 pt-8">
+            {capabilities.map(({ icon: Icon, title, text }) => (
+              <div key={title} className="flex items-start gap-3.5">
+                <Icon size={22} weight="duotone" className="mt-0.5 shrink-0 text-accent-700" />
+                <div>
+                  <h2 className="text-[14px] font-semibold text-zinc-800">{title}</h2>
+                  <p className="mt-1.5 text-[13px] leading-6 text-zinc-600">{text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-
-        <div className="mt-6 h-px w-40 bg-zinc-200" />
-
-        <button
-          type="button"
-          onClick={onNewSession}
-          className="mt-6 rounded-lg bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 active:translate-y-px"
-        >
-          新建会话
-        </button>
-        <p className="mt-3 text-[11px] text-zinc-400">所有数据仅保存在本机</p>
       </div>
+      <p className="shrink-0 px-6 pb-6 text-center text-[12px] text-zinc-500">会话保存在本机 · 对话按配置发送至模型 API</p>
     </main>
   )
 }
@@ -168,14 +183,12 @@ function SidebarToggle({ sidebarOpen, onToggle }: { sidebarOpen: boolean; onTogg
     <button
       type="button"
       onClick={onToggle}
-      className={`rounded-md p-1.5 transition hover:bg-zinc-100 ${
-        sidebarOpen ? 'text-zinc-700' : 'text-zinc-400'
-      }`}
+      className="icon-button"
       aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
       aria-pressed={sidebarOpen}
       title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
     >
-      <SidebarSimple size={16} weight="regular" />
+      <SidebarSimple size={20} weight="regular" />
     </button>
   )
 }

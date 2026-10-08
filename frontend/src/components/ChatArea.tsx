@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useRef } from 'react'
-import { SidebarSimple } from '@phosphor-icons/react'
+import { ChatTeardropText, SidebarSimple } from '@phosphor-icons/react'
 
 import { ApprovalModal, pendingFromDetail } from './ApprovalModal'
 import { TokenBadge } from './TokenBadge'
@@ -57,39 +57,38 @@ export function ChatArea(props: ChatAreaProps) {
 
   // 自动滚动：内容变化时贴底
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    bottomRef.current?.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'end' })
   }, [turns.length, liveTurn, liveTurn?.final_text, liveTurn?.work_items.length])
 
   // ---------- 会话视图（未选会话的欢迎页已由 App.tsx 的 `/` 路由承担） ----------
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-zinc-50">
+    <main className="flex min-w-0 flex-1 flex-col bg-white">
       {/* 头部：侧栏开关 + 标题 + token 用量 */}
-      <header className="flex items-center gap-2 border-b border-zinc-200 bg-white px-3 py-3">
+      <header className="workspace-header">
         <button
           type="button"
           onClick={toggleSidebar}
-          className={`rounded-md p-1.5 transition hover:bg-zinc-100 ${
-            sidebarOpen ? 'text-zinc-700' : 'text-zinc-400'
-          }`}
+          className="icon-button"
           aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
           aria-pressed={sidebarOpen}
           title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
         >
-          <SidebarSimple size={16} weight="regular" />
+          <SidebarSimple size={20} weight="regular" />
         </button>
-        <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
+        <h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-zinc-800">
           {detail?.session.title || '新会话'}
           {liveTurn?.state === 'running' && (
-            <span className="ml-2 text-xs font-normal text-sky-600">生成中…</span>
+            <span className="ml-2 text-xs font-normal text-accent-700">生成中…</span>
           )}
         </h1>
         <TokenBadge used={detail?.session.context_used} window={detail?.session.context_window} />
       </header>
 
       {/* 消息流 */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-8 sm:px-8">
         {hasContent ? (
-          <div className="mx-auto max-w-3xl space-y-6">
+          <div className="mx-auto max-w-[800px] space-y-10">
             {turns.map((t) => (
               <TurnGroup
                 key={t.turn_id}
@@ -105,8 +104,10 @@ export function ChatArea(props: ChatAreaProps) {
           </div>
         ) : (
           // draft 会话的空对话态
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-zinc-400">发送第一条消息，开始这段对话</p>
+          <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+            <span className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-50 text-accent-700"><ChatTeardropText size={26} weight="duotone" /></span>
+            <h2 className="text-[22px] font-semibold tracking-tight text-zinc-900">这次，想完成什么？</h2>
+            <p className="mt-3 text-[14px] leading-7 text-zinc-600">发送第一条消息，开始这段对话。<br />可以描述目标，也可以从一个具体问题开始。</p>
           </div>
         )}
         <div ref={bottomRef} />
@@ -114,7 +115,7 @@ export function ChatArea(props: ChatAreaProps) {
 
       {/* 连接错误提示（turn 仍在后端继续，可刷新回看） */}
       {streamError && (
-        <div className="border-t border-amber-200 bg-amber-50 px-5 py-2 text-[12px] text-amber-700">
+        <div role="alert" className="mx-5 mb-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
           {streamError}
         </div>
       )}
