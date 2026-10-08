@@ -4,7 +4,7 @@
   "documentation_review": {
     "date": "2026-10-08",
     "scope": "ARCHITECTURE聚焦后端九机制、对话/model-io存储、上下文压缩；调用快照存储说明从RELIABILITY移入",
-    "verification": "仅静态核对；未启动、构建或运行测试；保留既有状态、证据与 testedAt",
+    "verification": "仅静态核对；九机制代码文件均改为相对链接并确认目标存在；未启动、构建或运行测试，保留既有状态、证据与 testedAt",
     "findings": "九机制差异与压缩边界见ARCHITECTURE；审批停止、运行态/审批恢复、工具事件等静态缺口见session-handoff"
   },
   "rules": {
