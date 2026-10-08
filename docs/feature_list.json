@@ -3,9 +3,9 @@
   "description": "个人助手harness",
   "documentation_review": {
     "date": "2026-10-08",
-    "scope": "ARCHITECTURE、PRODUCT、RELIABILITY 精简并对照源码校准",
+    "scope": "ARCHITECTURE聚焦后端九机制、对话/model-io存储、上下文压缩；调用快照存储说明从RELIABILITY移入",
     "verification": "仅静态核对；未启动、构建或运行测试；保留既有状态、证据与 testedAt",
-    "findings": "审批停止、刷新运行态/审批选项、工具事件、压缩接线缺口见 ARCHITECTURE §5/§8 与 session-handoff"
+    "findings": "九机制差异与压缩边界见ARCHITECTURE；审批停止、运行态/审批恢复、工具事件等静态缺口见session-handoff"
   },
   "rules": {
     "single_active_feature": true,

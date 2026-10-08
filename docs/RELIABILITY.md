@@ -7,14 +7,10 @@
 | 通道 | 内容 | 轮转 |
 |---|---|---|
 | 控制台 + backend/data/logs/app.log | 工程事件/id：轮次、工具、审批、压缩、异常；不记对话正文 | 5MB，保留5份备份 |
-| `log/model-io-<session_id>.jsonl` | 主/子循环调用快照；不参与回放；摘要调用未接入 | 默认10MB，追加前检查；纳秒后缀归档 |
 
 - 级别：ERROR异常堆栈；WARNING可恢复异常；INFO生命周期；DEBUG默认关闭。
 - httpx/httpcore/urllib3/anthropic 降至WARNING；Langfuse已移除。
-- model-io：成功/失败均一调用一行。
-  - 标识/耗时/错误；system/messages全文、工具名；正文/tool_calls；输入/输出/缓存计量。
-  - MODELIO_DIR改目录；MODELIO_MAX_MB默认10。
-  - 写失败吞异常、记WARNING，**不得阻断对话**；含正文，**不得提交或外传**。
+- 模型调用快照的格式、存储与轮转统一见[ARCHITECTURE.md](ARCHITECTURE.md) §2.2。
 
 ## 2. 干净环境
 
@@ -47,6 +43,6 @@
 | 纯文档 | 核对源码/链接/差异；明确未跑运行验证 |
 
 - 标准启动见[init.md](init.md)：单后端进程、仅127.0.0.1:8100；PowerShell无系统沙箱。
-- 证据见[progress.md](progress.md)、[feature_list.json](feature_list.json)；静态缺口见ARCHITECTURE §8，未复现不得宣称通过。
+- 证据见[progress.md](progress.md)、[feature_list.json](feature_list.json)；静态缺口见[session-handoff.md](session-handoff.md)，未复现不得宣称通过。
 - 收尾同步progress/feature_list/session-handoff；核对clean-state-checklist并提交；密钥、运行数据、构建产物不入库。
 - 性能基准待补：压缩/全量回放耗时。

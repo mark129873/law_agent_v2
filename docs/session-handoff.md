@@ -4,9 +4,10 @@
 
 | 项 | 结果 |
 |---|---|
-| 目标 | 分析源码，精简 ARCHITECTURE / PRODUCT / RELIABILITY |
+| 目标 | 按用户进一步要求，将ARCHITECTURE收敛为后端九机制、对话存储、上下文压缩 |
 | 范围 | 仅文档；未改代码、配置或运行数据 |
-| 核对 | mini_harness、核心后端、前端、测试源码、依赖声明、历史进度 |
+| 核对 | README九机制与后端源码对应；model-io存储说明由RELIABILITY移入ARCHITECTURE |
+| 机制差异 | Web未实现GoalLoop、任务板三轮提醒；技能目录函数未注入系统提示词 |
 | 验证 | 仅静态一致性/文档检查；按用户要求未启动、构建、pytest或E2E |
 | 功能清单 | 保留20项passing、1项deprecated及历史证据；新增文档复核说明 |
 
