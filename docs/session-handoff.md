@@ -6,7 +6,8 @@
 - 已实现：Plan独立UI、请求/状态字段、工具、提示注入、审批特判与归档已删除；保留todo、普通三模式/审批、子助手和聊天历史。
 - 验证：假LLM专项12过；全量91过/3既有失败（同环境基线84过/同3失败）；前端build通过361.83kB，lint原有5警告。
 - 启动：标准uvicorn 127.0.0.1:8100实测health=ok、空会话列表、mode=build后正常停止。
-- 未验：云浏览器首次权限检查dismiss、重试ERR_BLOCKED_BY_CLIENT，原因未确认。没有完成UI实测或截图；BE-014及本轮复核标blocked。
+- 未验：复查云桌面截图明确“此页面已被某个扩展程序屏蔽”，127.0.0.1:5173报ERR_BLOCKED_BY_CLIENT；正常云浏览器API同错。具体扩展/触发规则未知；不是应用返回错误。未关闭扩展或改地址绕过，未完成UI实测；BE-014及本轮复核仍blocked。
+- 复查环境：假模型后端启动日志正常，但exec会话随后executor key changed，停止操作未能确认；后续进程查询未见serve_fake/vite，仅代表该执行上下文。原生终端输入又报Paste action不可用，宿主清理状态未完全确认。无源码改动、无真实模型调用。
 - 既有测试限制：无powershell使echo/批准后Remove-Item失败；Linux将C:/路径视为相对目录，Windows盘符越界断言失败。未扩修、未弱化测试。
 - 数据：开始时没有backend/data或log，无旧历史/计划可清理；没有历史兼容/迁移代码；测试全程无真实付费模型调用。
 - 证据：progress Session 009；临时测试日志在tmp/plan-removal/，不提交。

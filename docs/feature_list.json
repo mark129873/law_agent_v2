@@ -127,7 +127,7 @@
       "name": "权限管理体系（build/edit/yolo）",
       "description": "三种协作模式随提交生效；工具能力、命令只读降级、allow/deny规则、普通审批与拒绝反馈。独立Plan模式已移除；保留todo与子助手。",
       "status": "blocked",
-      "evidence": "本轮专项12过，全量91过/3既有Linux环境失败；build通过，lint原有5警告。Plan生产引用清零，普通审批与任务板/历史回放已离线验证；浏览器ERR_BLOCKED_BY_CLIENT未验。历史权限证据见progress Session 005。",
+      "evidence": "假LLM专项12过，全量91过/3既有Linux环境失败；build通过，lint原有5警告。Plan生产引用清零，普通审批与任务板/回放离线通过；云浏览器截图确认扩展屏蔽本地页面，ERR_BLOCKED_BY_CLIENT，UI未验。",
       "testedAt": "2026-10-08"
     },
     {
@@ -207,7 +207,7 @@
     "date": "2026-10-08",
     "scope": "删除独立Plan全链路；保留todo、三模式、普通审批和聊天历史",
     "status": "blocked",
-    "evidence": "假LLM专项12过；全量91过/3既有失败，origin/main同环境84过/同3失败。build通过361.83kB；lint原有5警告。浏览器ERR_BLOCKED_BY_CLIENT未完成验收，原因未确认；无真实模型调用。",
+    "evidence": "假LLM专项12过；全量91过/3既有失败，基线84过/同3失败；build通过361.83kB，lint原有5警告。复查截图明确某扩展屏蔽127.0.0.1，正常云浏览器API同报ERR_BLOCKED_BY_CLIENT；UI仍未验，无真实模型调用。",
     "boundaries": "UI待验；PowerShell缺失2项、Linux Windows盘符断言1项未扩修；此checkout无旧历史，无迁移/清理工具"
   }
 }
