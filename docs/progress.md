@@ -193,5 +193,5 @@
   - 标准uvicorn 127.0.0.1:8100启动成功；health=ok、sessions=[]、permission/state仅mode=build；正常停止。
   - 云浏览器两次尝试未完成：首次权限检查dismiss，随后ERR_BLOCKED_BY_CLIENT，原因未确认；未改路绕过，没有截图或UI通过结论。
 - 收尾：文档/JSON/差异核对；.tmp-data无残留；临时服务停止；测试/依赖/构建产物不入库。功能复核标blocked，保留浏览器验收缺口，不宣称全部完成。
-- 提交：fbc907c（refactor: 移除独立Plan模式并保留普通权限流程）；本地完成。push审查补授权后放行，但GitHub写认证缺失（could not read Username），远端dot尚未建立；待安全认证后重推。
+- 提交：fbc907c（refactor: 移除独立Plan模式并保留普通权限流程）；已通过既有认证的云终端推送dot并核验远端；exec上下文缺凭据的临时阻塞已解决，main未改。
 - 下一步：可访问测试页面后补浏览器模式切换/普通审批验收；Windows环境复测既有PowerShell与路径断言。

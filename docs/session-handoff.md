@@ -2,7 +2,7 @@
 
 ## 本轮（2026-10-08，Session 009）
 
-- 分支：远端原仅main e4bc99e；从origin/main建dot，本地提交fbc907c；push因缺GitHub写认证失败，远端dot尚未建立，main保持。
+- 分支：远端原仅main e4bc99e；从origin/main建dot，代码提交fbc907c；已用既有认证云终端推送dot并核验，main保持。
 - 已实现：Plan独立UI、请求/状态字段、工具、提示注入、审批特判与归档已删除；保留todo、普通三模式/审批、子助手和聊天历史。
 - 验证：假LLM专项12过；全量91过/3既有失败（同环境基线84过/同3失败）；前端build通过361.83kB，lint原有5警告。
 - 启动：标准uvicorn 127.0.0.1:8100实测health=ok、空会话列表、mode=build后正常停止。
@@ -34,7 +34,7 @@
 
 ## 下一步
 
-1. 安全配置GitHub写认证后push dot并核验；在可访问的云浏览器补模式/审批验收，在Windows复测3项既有失败。
+1. 在可访问的云浏览器补模式/审批验收，在Windows复测3项既有失败。
 2. 分项修复、补必要验证；既有passing不覆盖本轮发现的缺口。
 3. 保留契约：
    - 四表、稳定sequence、单Queue、审批工时、regenerate用量重算。
