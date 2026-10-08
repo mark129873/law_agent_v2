@@ -61,12 +61,12 @@
 - tmp/ — 临时文件目录(不入库, 可随时清空)
 
 项目开发参考目录(.开头):
-- .github_claude-for-legal/ — Claude for Legal 参考仓库
-- .github_claude-for-legal-zh-cn/ — 上一仓库的中文翻译版(结构与英文版一致)
-- .github_claude-for-legal-ZH/ — Claude for Legal ZH 参考仓库 (基于claude-for-legal适配中国版)
-- .github_codex/ — OpenAI Codex CLI 源码仓库克隆, agent harness工程实现参考
-- .github_ZCode/ — ZCode 源码仓库克隆, agent harness工程实现参考
-- .github_learn-claude-code/ — learn-claude-code 教程仓库克隆, agent harness思想参考
+- .github_claude-for-legal/ — Claude for Legal 参考仓库:  https://github.com/anthropics/claude-for-legal
+- .github_claude-for-legal-zh-cn/ — 上一仓库的中文翻译版(结构与英文版一致) 
+- .github_claude-for-legal-ZH/ — Claude for Legal ZH 参考仓库 (基于claude-for-legal适配中国版): https://github.com/CSlawyer1985/claude-for-legal-ZH
+- .github_codex/ — OpenAI Codex CLI 源码仓库克隆, agent harness工程实现参考: https://github.com/openai/codex
+- .github_ZCode/ — ZCode 源码仓库克隆, agent harness工程实现参考: https://github.com/zai-org/ZCode
+- .github_learn-claude-code/ — learn-claude-code 教程仓库克隆, agent harness思想参考: https://github.com/shareAI-lab/learn-claude-code
 
 ### docs/ -- 文档导航
 
