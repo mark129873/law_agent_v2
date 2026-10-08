@@ -1,6 +1,12 @@
 {
   "project": "law_agent_v2",
   "description": "个人助手harness",
+  "refactoring_review": {
+    "date": "2026-10-08",
+    "scope": "清理未使用代码；共用turn装配、消息/部件查询、模型调用记录与审批等待；保留九机制边界",
+    "status": "passing",
+    "evidence": "隔离空库+假LLM全量pytest 87 passed（基线83，新增4）；覆盖Stop续轮、子助手隔离/拒绝反馈、子模型失败快照、model-io写失败；.tmp-data无残留；无schema/前端改动，未启动真实服务"
+  },
   "documentation_review": {
     "date": "2026-10-08",
     "scope": "ARCHITECTURE聚焦后端九机制、对话/model-io存储、上下文压缩；调用快照存储说明从RELIABILITY移入",

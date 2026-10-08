@@ -1,7 +1,7 @@
 """subtask 子助手：mini_harness §7 的移植。
 
 行为约定（与 mini_harness 一致）：
-- 全新消息历史跑独立循环（最多 30 轮），只有 6 个基础工具（无 subtask 防递归）；
+- 全新消息历史跑独立循环（最多 30 轮），仅同步工具（无 subtask 防递归）；
 - 最终文本作为工具结果返回父级；
 - Web 版差异：子循环的文本增量实时以 subtask_delta 事件推给前端右侧面板；
   落盘只保留"目标+状态+最终输出"一张 subtask 卡（子循环内部步骤不落库）；
@@ -15,11 +15,10 @@ allow 执行 / deny 拒绝（Error 字符串喂回）/ ask 走 deps.approver 交
 
 import asyncio
 import logging
-import time
 
-from app.agent.permission_service import evaluate
+from app.agent.model_call import record_model_step
 from app.agent.tools import TOOL_HANDLERS, TOOLS, execute_tool
-from app.modelio import record_llm_call
+from app.sessions.approvals import authorize_tool
 
 logger = logging.getLogger(__name__)
 
@@ -62,57 +61,20 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
             if deps.stop_flag():
                 status = "stopped"
                 break
-            text_acc = ""
-            tool_uses: list[dict] = []
-            step_usage: dict = {"input_tokens": 0, "output_tokens": 0}
-            child_snapshot = [dict(m) for m in child_history]  # 观测上报用的调用时快照
-            step_started = time.monotonic()  # LLM 调用耗时（model-io 记录用）
-            llm_error: str | None = None  # 非 None = 该次调用失败（model-io 记录用）
-            try:
+            with record_model_step(
+                deps, SUBTASK_SYSTEM_PROMPT, child_history, SUBTASK_TOOLS, subtask_id=subtask_id
+            ) as reply:
                 async for event in deps.client.stream(
                     system=SUBTASK_SYSTEM_PROMPT, messages=child_history, tools=SUBTASK_TOOLS
                 ):
-                    kind = event.get("type")
-                    if kind == "text_delta":
-                        text_acc += event.get("text", "")
-                    elif kind == "tool_use":
-                        tool_uses.append(event)
-                    elif kind == "usage":
+                    reply.accept(event)
+                    if event.get("type") == "usage":
                         # 子循环 token 与主循环同口径：计入会话统计（add_usage），
                         # 并发 token_count 事件给前端（经生成器逐层转发出 SSE）。
                         # 注意不喂 deps.last_input_tokens——那是主循环 compact 预算的口径
-                        step_usage = {
-                            "input_tokens": event.get("input_tokens", 0),
-                            "output_tokens": event.get("output_tokens", 0),
-                            "cache_read_tokens": event.get("cache_read_tokens", 0),
-                            "cache_creation_tokens": event.get("cache_creation_tokens", 0),
-                        }
-                        deps.recorder.add_usage(
-                            step_usage["input_tokens"], step_usage["output_tokens"],
-                            cache_read_tokens=step_usage["cache_read_tokens"],
-                            cache_creation_tokens=step_usage["cache_creation_tokens"],
-                        )
-                        yield {"type": "token_count", **step_usage}
-            except Exception as exc:
-                llm_error = str(exc)  # 记入 model-io（该次调用失败），再交给外层统一处理
-                raise
-            finally:
-                # model-io：子循环调用也逐次落 JSONL，metadata 带 subtask_id
-                record_llm_call(
-                    deps.recorder.session_id, deps.recorder.turn_id,
-                    getattr(deps.client, "model", "unknown"),
-                    SUBTASK_SYSTEM_PROMPT, child_snapshot,
-                    response_text=text_acc,
-                    tool_calls=[
-                        {"id": t["id"], "name": t["name"], "input": t.get("input") or {}}
-                        for t in tool_uses
-                    ],
-                    usage=step_usage,
-                    duration_ms=(time.monotonic() - step_started) * 1000,
-                    tool_names=[t["name"] for t in SUBTASK_TOOLS],
-                    subtask_id=subtask_id,
-                    error=llm_error,
-                )
+                        deps.recorder.add_usage(**reply.usage)
+                        yield {"type": "token_count", **reply.usage}
+            text_acc, tool_uses = reply.text, reply.tool_uses
 
             if text_acc:
                 output_acc.append(text_acc)
@@ -125,14 +87,7 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
             child_history.append(
                 {
                     "role": "assistant",
-                    "content": [
-                        *( [{"type": "text", "text": text_acc}] if text_acc else [] ),
-                        *[
-                            {"type": "tool_use", "id": t["id"], "name": t["name"],
-                             "input": t.get("input") or {}}
-                            for t in tool_uses
-                        ],
-                    ],
+                    "content": reply.assistant_blocks(),
                 }
             )
             tool_results = []
@@ -142,30 +97,13 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                     break
                 # 子工具权限与主循环同权（ZCode：子代理请求路由父会话 UI）：
                 # allow 执行 / deny 拒绝 / ask 走交互审批（挂起等待，工时暂停）
-                result = evaluate(None, t["name"], t.get("input") or {})
-                if result["decision"] == "allow":
+                out = await authorize_tool(
+                    deps, t["name"], t.get("input") or {}, allow_full_access=False
+                )
+                if out is None:
                     out = await asyncio.to_thread(
                         execute_tool, t["name"], t.get("input") or {}
                     )
-                elif result["decision"] == "ask":
-                    # 复刻 ZCode：子助手的权限请求路由到父会话 UI 交互审批
-                    # （allow_full_access=False：子代理不投放"完全访问"选项）
-                    deps.recorder.pause_active()
-                    try:
-                        outcome = await deps.approver(
-                            t["name"], t.get("input") or {}, result["reason"],
-                            allow_full_access=False,
-                        )
-                    finally:
-                        deps.recorder.resume_active()
-                    if outcome["approved"]:
-                        out = await asyncio.to_thread(
-                            execute_tool, t["name"], t.get("input") or {}
-                        )
-                    else:
-                        out = f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or result['reason']}"
-                else:
-                    out = f"Error: 已被安全策略拒绝：{result['reason']}"
                 tool_results.append(
                     {"type": "tool_result", "tool_use_id": t["id"], "content": out}
                 )

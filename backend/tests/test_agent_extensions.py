@@ -21,8 +21,10 @@ class ScriptClient:
 
     def __init__(self, scripts: list[list[dict]]) -> None:
         self.scripts = list(scripts)
+        self.calls: list[dict] = []
 
     async def stream(self, *, system, messages, tools):
+        self.calls.append({"messages": [dict(m) for m in messages], "tools": tools})
         for event in self.scripts.pop(0):
             yield event
 
@@ -268,3 +270,68 @@ def test_subtask_tokens_counted(recorder) -> None:
     main_recs = [r for r in records if not r["subtask_id"]]
     assert len(main_recs) == 2
     assert len({r["turn_id"] for r in records}) == 1
+
+
+def test_subtask_refusal_preserves_isolation(recorder) -> None:
+    """复用审批后，子助手仍限制选项、保留独立历史，并把拒绝反馈喂回模型。"""
+    client = ScriptClient([
+        [{"type": "tool_use", "id": "st", "name": "subtask", "input": {"goal": "写入说明"}},
+         {"type": "usage", "input_tokens": 50, "output_tokens": 1}],
+        [{"type": "tool_use", "id": "child", "name": "write_file",
+          "input": {"path": "denied.txt", "content": "不应写入"}},
+         {"type": "usage", "input_tokens": 999, "output_tokens": 2}],
+        [{"type": "text_delta", "text": "已取消写入"}],
+        [{"type": "text_delta", "text": "已收到子助手反馈"}],
+    ])
+    deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
+                    history=[{"role": "user", "content": "父级私有上下文"}])
+    options = []
+
+    async def deny(_name, _input, _reason, **kwargs):
+        options.append(kwargs)
+        assert deps.last_input_tokens == 50  # 子助手用量不替换主上下文预算。
+        return {"approved": False, "denial_reason": "用户要求仅阅读"}
+
+    deps.approver = deny
+    events = _run(deps)
+    assert options == [{"allow_full_access": False}]
+    assert not (workspace_root() / "denied.txt").exists()
+    assert client.calls[1]["messages"] == [{"role": "user", "content": "写入说明"}]
+    assert not {"subtask", "todo_write"} & {t["name"] for t in client.calls[1]["tools"]}
+    result = client.calls[2]["messages"][-1]["content"][0]
+    assert result["tool_use_id"] == "child" and "用户要求仅阅读" in result["content"]
+    assert events[-1]["state"] == "success"
+
+
+def test_subtask_failure_records_partial_call(recorder) -> None:
+    """子模型流中失败仍记录部分输出、错误与用量，父循环可继续收口。"""
+    from app.agent.subtask import SUBTASK_SYSTEM_PROMPT
+    from app.config import settings
+
+    class BrokenChildClient:
+        model = "test-model"
+        calls = 0
+
+        async def stream(self, *, system, messages, tools):
+            self.calls += 1
+            if system == SUBTASK_SYSTEM_PROMPT:
+                yield {"type": "text_delta", "text": "子助手部分输出"}
+                yield {"type": "usage", "input_tokens": 8, "output_tokens": 3,
+                       "cache_read_tokens": 1, "cache_creation_tokens": 2}
+                raise RuntimeError("子模型断线")
+            if self.calls == 1:
+                yield {"type": "tool_use", "id": "st", "name": "subtask", "input": {"goal": "分析"}}
+            else:
+                yield {"type": "text_delta", "text": "已处理子任务失败"}
+
+    events = _run(TurnDeps(client=BrokenChildClient(), recorder=recorder, system_prompt="测试",
+                          history=[{"role": "user", "content": "委派分析"}]))
+    assert next(e for e in events if e["type"] == "subtask_completed")["status"] == "failed"
+    assert events[-1]["state"] == "success"
+    path = Path(settings.modelio_dir) / "model-io-s1.jsonl"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 3
+    child = next(r for r in records if r["subtask_id"])
+    assert child["response"]["text"] == "子助手部分输出" and child["error"] == "子模型断线"
+    assert child["usage"] == {"input_tokens": 8, "output_tokens": 3,
+                              "cache_read_tokens": 1, "cache_creation_tokens": 2}

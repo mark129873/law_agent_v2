@@ -16,8 +16,6 @@
 "总是允许"退化为整条命令精确匹配——否则 `rm:*` 会连 `rm -rf /` 一起放行。
 """
 
-import re
-
 from app.agent.tools import safe_path
 from app.config import settings
 
@@ -32,16 +30,6 @@ _DENY_PATTERNS: list[str] = [
     "shutdown -s",
     "rd /s /q c:\\",
 ]
-
-# 删除类命令根词（PowerShell 与 Unix 风格）：既用于硬拒词表外的审批推导，
-# 也用于"高危根命令禁止前缀规则"的判定
-_DELETE_ROOTS = ("remove-item", "del", "erase", "rd", "rmdir", "rm", "unlink")
-
-_HIGH_RISK_RE = re.compile(
-    r"(?i)(chmod\s+777|\|\s*bash|\|\s*sh\b|invoke-expression|\biex\s|"
-    "reg\\s+add|hkey_local_machine|net\\s+user\\s+.*\\s+/add|"
-    "set-executionpolicy\\s+unrestricted)"
-)
 
 # 高危根命令："总是允许"对它们只生成整条精确规则，绝不生成前缀规则
 _HIGH_RISK_ROOTS = frozenset(

@@ -252,3 +252,23 @@ def test_llm_error_fails_turn(recorder) -> None:
 
     result = replay.load_replay(deps.recorder.db, "s1")
     assert any(x["kind"] == "error" for x in result["turns"][0]["work_items"])
+
+
+def test_stop_hook_can_continue_turn(recorder, monkeypatch) -> None:
+    """抽取模型步后，Stop注入仍进入下一次调用，最终回复正常回放。"""
+    from app.agent import hooks
+    from app.sessions import replay
+
+    monkeypatch.setitem(hooks._registry, "Stop", [
+        lambda context: "请补充结果" if context["steps"] == 1 else None
+    ])
+    client = FakeClient([
+        [{"type": "text_delta", "text": "初步结果"}],
+        [{"type": "text_delta", "text": "完整结果"}],
+    ])
+    events = _run(TurnDeps(client=client, recorder=recorder, system_prompt="测试",
+                          history=[{"role": "user", "content": "完成任务"}]))
+
+    assert client.calls[1]["messages"][-1] == {"role": "user", "content": "请补充结果"}
+    assert events[-1]["state"] == "success"
+    assert replay.load_replay(recorder.db, "s1")["turns"][0]["final_text"] == "完整结果"

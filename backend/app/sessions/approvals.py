@@ -17,7 +17,7 @@ approved=False 时 denial_reason 携带用户反馈原文，作为 tool_result �
 import asyncio
 import logging
 
-from app.agent.permission_service import derive_rule
+from app.agent.permission_service import derive_rule, evaluate
 from app.models import new_id, now_ms
 from app.sessions import store
 
@@ -85,6 +85,28 @@ def build_options(tool_name: str, tool_input: dict, allow_full_access: bool = Tr
         options.append({"option_id": "allowAlways", "label": "总是允许", "content": rule["content"]})
     options.append({"option_id": "deny", "label": "拒绝"})
     return options
+
+
+async def authorize_tool(deps, tool_name: str, tool_input: dict, *,
+                         data_dir=None, allow_full_access: bool = True) -> str | None:
+    """共用权限闸门：None放行，拒绝返回Error；审批等待统一剔除工时。"""
+    result = evaluate(data_dir, tool_name, tool_input)
+    decision, reason = result["decision"], result["reason"]
+    if decision == "allow":
+        return None
+    if decision != "ask":
+        return f"Error: 已被安全策略拒绝：{reason}"
+
+    # 主循环沿用默认选项；子助手明确禁用完全访问，避免复用时丢失限制。
+    options = {} if allow_full_access else {"allow_full_access": False}
+    deps.recorder.pause_active()
+    try:
+        outcome = await deps.approver(tool_name, tool_input, reason or "该操作需要确认", **options)
+    finally:
+        deps.recorder.resume_active()
+    if not outcome["approved"]:
+        return f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or reason}"
+    return None
 
 
 class InteractiveApprover:

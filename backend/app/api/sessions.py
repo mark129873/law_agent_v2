@@ -154,8 +154,6 @@ async def start_turn(
             body.mode or current["mode"],
             body.plan_enabled if body.plan_enabled is not None else current["plan_enabled"],
         )
-    exec_state = execution_state.load_execution_state(settings.data_dir)
-
     # turn 使用独立 DB 会话：HTTP 请求结束时请求级会话会关闭，
     # 而后台泵任务要一直用到 turn 收口。
     turn_db = db.new_session()
@@ -165,18 +163,7 @@ async def start_turn(
     history = replay.load_history(turn_db, session_id)
     history.append({"role": "user", "content": body.text})
 
-    queue: asyncio.Queue = asyncio.Queue()
-    deps = TurnDeps(
-        client=client,
-        recorder=recorder,
-        system_prompt=_load_system_prompt(exec_state["plan_enabled"]),
-        history=history,
-        stop_flag=stop_event.is_set,
-        approver=InteractiveApprover(turn_db, session_id, recorder, queue),
-        settings=settings,
-        queue=queue,
-    )
-    return _turn_sse_response(session_id, recorder, stop_event, deps, turn_db)
+    return _turn_sse_response(client, recorder, history, stop_event)
 
 
 @router.post("/{session_id}/regenerate")
@@ -206,20 +193,9 @@ async def regenerate_turn(
 
     history = replay.load_history(turn_db, session_id)  # 以保留的用户消息结尾
 
-    queue: asyncio.Queue = asyncio.Queue()
-    deps = TurnDeps(
-        client=client,
-        recorder=recorder,
-        system_prompt=_load_system_prompt(execution_state.load_execution_state(settings.data_dir)["plan_enabled"]),
-        history=history,
-        stop_flag=stop_event.is_set,
-        approver=InteractiveApprover(turn_db, session_id, recorder, queue),
-        settings=settings,
-        queue=queue,
-        persist_user_message=False,  # 用户消息已存在，不重复落盘
-        user_sequence=last_user.sequence,
+    return _turn_sse_response(
+        client, recorder, history, stop_event, user_sequence=last_user.sequence
     )
-    return _turn_sse_response(session_id, recorder, stop_event, deps, turn_db)
 
 
 def _check_llm_config() -> None:
@@ -236,13 +212,25 @@ def _check_not_running(session_id: str) -> None:
 
 
 def _turn_sse_response(
-    session_id: str, recorder, stop_event, deps: TurnDeps, turn_db
+    client, recorder: TurnRecorder, history: list, stop_event: asyncio.Event,
+    *, user_sequence: int | None = None,
 ) -> StreamingResponse:
-    """turn 的公共 SSE 出口：后台泵任务 + 队列 + 心跳（start_turn/regenerate 共用）。"""
-    # 复用路由层创建的那个队列：InteractiveApprover 持有同一引用直推审批事件，
-    # 若在这里另建新队列，审批事件会被写进无人消费的旧队列而丢失（实测踩过的坑）
-    queue = deps.queue
-    assert queue is not None, "TurnDeps.queue 必须由路由层预先创建"
+    """共用turn装配与SSE出口；重跑传用户sequence，避免重复保存请求。"""
+    session_id, turn_db = recorder.session_id, recorder.db
+    queue: asyncio.Queue = asyncio.Queue()
+    # 审批与循环必须共用同一Queue，否则等待时发出的审批事件无人消费。
+    deps = TurnDeps(
+        client=client,
+        recorder=recorder,
+        system_prompt=_load_system_prompt(execution_state.load_execution_state(settings.data_dir)["plan_enabled"]),
+        history=history,
+        stop_flag=stop_event.is_set,
+        approver=InteractiveApprover(turn_db, session_id, recorder, queue),
+        settings=settings,
+        queue=queue,
+        persist_user_message=user_sequence is None,
+        user_sequence=user_sequence,
+    )
 
     async def pump() -> None:
         """把循环事件泵进队列；收口后注销并关闭独立会话。"""

@@ -8,7 +8,7 @@
 
 | 机制 | 本项目实现 | 代码文件 |
 |---|---|---|
-| 1. Agent Loop | run_turn 异步循环，最多40步；无工具且Stop无注入则结束；工具错误回填，模型错误以failed收口 | [agent/loop.py](../backend/app/agent/loop.py)、[agent/llm.py](../backend/app/agent/llm.py) |
+| 1. Agent Loop | run_turn 异步循环，最多40步；无工具且Stop无注入则结束；工具错误回填，模型错误以failed收口 | [agent/loop.py](../backend/app/agent/loop.py)、[agent/llm.py](../backend/app/agent/llm.py)、[agent/model_call.py](../backend/app/agent/model_call.py) |
 | 2. Tool Use | TOOLS提供schema，TOOL_HANDLERS分发同步工具；todo/subtask另走异步分支 | [agent/tools.py](../backend/app/agent/tools.py)、[agent/loop.py](../backend/app/agent/loop.py) |
 | 3. Permission | evaluate返回allow/deny/ask；build/edit/yolo + 计划开关；硬拒优先，审批决定回填模型 | [agent/permission_service.py](../backend/app/agent/permission_service.py)、[sessions/approvals.py](../backend/app/sessions/approvals.py) |
 | 4. Hooks | Pre/Post记录工具日志；Stop可注入续轮；UserPromptSubmit仅预留，权限独立于hook | [agent/hooks.py](../backend/app/agent/hooks.py)、[agent/loop.py](../backend/app/agent/loop.py) |
@@ -23,6 +23,7 @@
   - 文件读/写/改/删经safe_path限制于workspace；PowerShell仅固定cwd，无系统沙箱，glob未过同等路径检查。
 - 运行：同会话单turn，跨会话可并行；工具逐个执行；停止在检查点生效，不强杀命令。
 - 状态：mode、plan_enabled、权限规则全项目共享；事件经同一Queue输出SSE，断线不取消后台turn。
+- 复用：发送/重跑共用turn装配；主/子共用模型调用记录与审批等待，循环和工具范围独立。
 - README描述参考脚本；上述未接通项为当前源码状态，完整待核对清单见[交接文档](session-handoff.md)。
 
 ## 2. 对话数据存储
@@ -45,14 +46,14 @@
    - turn结束保存状态/工时/用量；active_ms排除审批等待，主/子循环用量一起累计。
 2. **读取与重跑**
    - load_replay：按turn分组，末条正文为最终回复；审批按request_id取最新状态。
-   - load_history：重建模型messages，补齐tool_use/tool_result，按压缩边界裁剪。
+   - load_history：与load_replay共用消息/部件查询；重建模型messages、补齐工具往返、按压缩边界裁剪。
    - regenerate：保留最后用户消息，删除旧回复/该轮事实后重跑并重算用量；不撤销文件/命令操作。
 
 **不迁移schema**：改models.py表结构 → 删除backend/data/ → 重启建表。
 
 ### 2.2 model-io：模型调用快照
 
-实现：modelio.py；主循环和子助手在每次模型调用结束时记录，成功/失败均写入。
+实现：[modelio.py](../backend/app/modelio.py)；主/子循环共用model_call记录每次调用，成功/失败均写入。
 
 | 项 | 保存方式 |
 |---|---|

@@ -22,9 +22,9 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
 from app.agent import hooks
-from app.agent.permission_service import evaluate
+from app.agent.model_call import record_model_step
 from app.agent.tools import TOOLS, execute_tool
-from app.modelio import record_llm_call
+from app.sessions.approvals import authorize_tool
 from app.sessions.recorder import TurnRecorder
 
 logger = logging.getLogger(__name__)
@@ -57,12 +57,12 @@ class TurnDeps:
     system_prompt: str
     history: list = field(default_factory=list)  # Anthropic messages 形态，原地追加
     tools: list = field(default_factory=lambda: list(TOOLS))
-    approver: Callable = _auto_approver  # async (tool, input, reason) -> bool
+    approver: Callable = _auto_approver  # async (tool, input, reason) -> 审批结果dict
     max_steps: int = MAX_STEPS_DEFAULT
     stop_flag: Callable[[], bool] = field(default_factory=lambda: (lambda: False))
     settings: object = None  # 压缩预算等（None = 禁用压缩）
     last_input_tokens: int | None = None  # 上一轮真实 input_tokens（无则估算）
-    queue: object | None = None  # SSE 事件队列（subtask/todo_write 直推事件用）
+    queue: object | None = None  # SSE共用队列（审批/子助手直推事件用）
     persist_user_message: bool = True  # 重新生成时为 False（用户消息已存在）
     user_sequence: int | None = None  # 重新生成时锚定的既有用户消息 sequence
 
@@ -77,7 +77,7 @@ def _is_error_output(output: str) -> bool:
     return isinstance(output, str) and output.startswith("Error:")
 
 
-def _part_id_for(tool_call_id: str) -> str:
+def _new_tool_part_id() -> str:
     """工具部件的稳定行 id：同一次调用的多次状态推进写同一行。"""
     return f"tl{uuid.uuid4().hex[:30]}"  # 32 字符以内
 
@@ -92,23 +92,6 @@ def _last_user_text(history: list) -> str:
             if isinstance(content, list):
                 return "".join(b.get("text", "") for b in content if b.get("type") == "text")
     return ""
-
-
-def _assistant_blocks(text: str, tool_uses: list[dict]) -> list[dict]:
-    """构造回填历史的 assistant 内容块（text + tool_use）。"""
-    blocks: list[dict] = []
-    if text:
-        blocks.append({"type": "text", "text": text})
-    for tool_use in tool_uses:
-        blocks.append(
-            {
-                "type": "tool_use",
-                "id": tool_use["id"],
-                "name": tool_use["name"],
-                "input": tool_use.get("input") or {},
-            }
-        )
-    return blocks
 
 
 async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
@@ -140,74 +123,38 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
 
             # ---- LLM 流式调用（一个模型步） ----
             message_id = deps.recorder.step_message()
-            text_acc = ""
-            tool_uses: list[dict] = []
-            step_usage = {"input_tokens": 0, "output_tokens": 0}
-            messages_snapshot = [dict(m) for m in deps.history]  # 观测上报用的调用时快照
-            step_started = time.monotonic()  # LLM 调用耗时（model-io 记录用）
-            llm_error: str | None = None  # 非 None = 该次调用失败（model-io 记录用）
             try:
-                async for event in deps.client.stream(
-                    system=deps.system_prompt, messages=deps.history, tools=deps.tools
-                ):
-                    if deps.stop_flag():
-                        stop_requested = True
-                        break
-                    kind = event.get("type")
-                    if kind == "text_delta":
-                        text_acc += event.get("text", "")
-                        yield {"type": "delta", "text": event.get("text", "")}
-                    elif kind == "tool_use":
-                        tool_uses.append(event)
-                    elif kind == "usage":
-                        step_usage = {
-                            "input_tokens": event.get("input_tokens", 0),
-                            "output_tokens": event.get("output_tokens", 0),
-                            "cache_read_tokens": event.get("cache_read_tokens", 0),
-                            "cache_creation_tokens": event.get("cache_creation_tokens", 0),
-                        }
-                        deps.recorder.add_usage(
-                            step_usage["input_tokens"], step_usage["output_tokens"],
-                            cache_read_tokens=step_usage["cache_read_tokens"],
-                            cache_creation_tokens=step_usage["cache_creation_tokens"],
-                        )
-                        # 真实 input 喂给 compact 预算（此前该字段无人赋值，只能字符估算）
-                        deps.last_input_tokens = step_usage["input_tokens"]
-                        yield {
-                            "type": "token_count",
-                            "input_tokens": event.get("input_tokens", 0),
-                            "output_tokens": event.get("output_tokens", 0),
-                        }
+                with record_model_step(deps, deps.system_prompt, deps.history, deps.tools) as reply:
+                    async for event in deps.client.stream(
+                        system=deps.system_prompt, messages=deps.history, tools=deps.tools
+                    ):
+                        if deps.stop_flag():
+                            stop_requested = True
+                            break
+                        reply.accept(event)
+                        kind = event.get("type")
+                        if kind == "text_delta":
+                            yield {"type": "delta", "text": event.get("text", "")}
+                        elif kind == "usage":
+                            deps.recorder.add_usage(**reply.usage)
+                            # 只有主循环input影响主上下文压缩预算。
+                            deps.last_input_tokens = reply.usage["input_tokens"]
+                            yield {"type": "token_count", "input_tokens": reply.usage["input_tokens"],
+                                   "output_tokens": reply.usage["output_tokens"]}
             except Exception as exc:  # LLM 层异常：转 error 事件，failed 收口
                 logger.exception("LLM 调用失败")
-                llm_error = str(exc)  # 记入 model-io（该次调用失败）
                 deps.recorder.write_error_part(message_id, str(exc))
                 yield {"type": "error", "message": str(exc)}
                 state = "failed"
                 break
-            finally:
-                # model-io：逐调用快照落 JSONL（成功与失败都记；失败不影响主流程）
-                record_llm_call(
-                    deps.recorder.session_id, turn_id,
-                    getattr(deps.client, "model", "unknown"),
-                    deps.system_prompt, messages_snapshot,
-                    response_text=text_acc,
-                    tool_calls=[
-                        {"id": t["id"], "name": t["name"], "input": t.get("input") or {}}
-                        for t in tool_uses
-                    ],
-                    usage=step_usage,
-                    duration_ms=(time.monotonic() - step_started) * 1000,
-                    tool_names=[t["name"] for t in deps.tools],
-                    error=llm_error,
-                )
+            text_acc, tool_uses = reply.text, reply.tool_uses
 
             # ---- 里程碑落盘：正文与工具调用（pending 态） ----
             if text_acc:
                 deps.recorder.write_text_part(message_id, text_acc)
             part_ids: dict[str, str] = {}
             for tool_use in tool_uses:
-                part_id = _part_id_for(tool_use["id"])
+                part_id = _new_tool_part_id()
                 part_ids[tool_use["id"]] = part_id
                 deps.recorder.upsert_tool_part(
                     message_id,
@@ -235,7 +182,7 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
 
             # ---- 工具执行：权限闸门 → 审批 → 线程池执行 ----
             deps.history.append(
-                {"role": "assistant", "content": _assistant_blocks(text_acc, tool_uses)}
+                {"role": "assistant", "content": reply.assistant_blocks()}
             )
             tool_results: list[dict] = []
             for tool_use in tool_uses:
@@ -294,52 +241,35 @@ async def _execute_one(
     hooks.trigger("PreToolUse", {"name": name, "tool_call_id": call_id})
 
     # 权限评估（ZCode checkPermission 复刻）：allow 执行 / deny 拒绝 / ask 走审批
-    result = evaluate(deps.settings.data_dir if deps.settings else None, name, tool_input)
-    decision, reason = result["decision"], result["reason"]
-    status = "completed"
-    output: str | None = None
+    output = await authorize_tool(
+        deps, name, tool_input, data_dir=deps.settings.data_dir if deps.settings else None
+    )
+    status = "denied" if output is not None else "completed"
+    if output is None:
+        deps.recorder.upsert_tool_part(
+            message_id, part_id,
+            {"tool_call_id": call_id, "name": name, "input": tool_input, "status": "running"},
+        )
+        if name == "subtask":
+            # 特殊工具：嵌套循环，事件实时吐（最后由哨兵带出输出文本）
+            from app.agent.subtask import run_subtask_events
 
-    if decision == "deny":
-        output = f"Error: 已被安全策略拒绝：{reason}"
-        status = "denied"
-    else:
-        if decision == "ask":
-            # 审批等待不计入有效工时（active_ms 口径）
-            deps.recorder.pause_active()
-            try:
-                outcome = await deps.approver(name, tool_input, reason or "该操作需要确认")
-            finally:
-                deps.recorder.resume_active()
-            approved = outcome["approved"]
-            if not approved:
-                output = f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or reason}"
-                status = "denied"
-
-        if output is None:
-            deps.recorder.upsert_tool_part(
-                message_id, part_id,
-                {"tool_call_id": call_id, "name": name, "input": tool_input, "status": "running"},
-            )
-            if name == "subtask":
-                # 特殊工具：嵌套循环，事件实时吐（最后由哨兵带出输出文本）
-                from app.agent.subtask import run_subtask_events
-
-                async for event in run_subtask_events(deps, message_id, tool_input):
-                    if "_subtask_output" in event:
-                        output = event["_subtask_output"]
-                    else:
-                        yield event
-            elif name == "todo_write":
-                # 特殊工具：落 todo part + todo_updated 事件
-                from app.agent.todo import handle_todo_write
-
-                output, extra_events = await handle_todo_write(deps, message_id, tool_input)
-                for event in extra_events:
+            async for event in run_subtask_events(deps, message_id, tool_input):
+                if "_subtask_output" in event:
+                    output = event["_subtask_output"]
+                else:
                     yield event
-            else:
-                output = await asyncio.to_thread(execute_tool, name, tool_input)
-            if _is_error_output(output):
-                status = "failed"
+        elif name == "todo_write":
+            # 特殊工具：落 todo part + todo_updated 事件
+            from app.agent.todo import handle_todo_write
+
+            output, extra_events = await handle_todo_write(deps, message_id, tool_input)
+            for event in extra_events:
+                yield event
+        else:
+            output = await asyncio.to_thread(execute_tool, name, tool_input)
+        if _is_error_output(output):
+            status = "failed"
 
     duration_ms = (time.time() - started) * 1000
     deps.recorder.upsert_tool_part(

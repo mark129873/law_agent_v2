@@ -1,20 +1,20 @@
 # 会话交接
 
-## 本轮（2026-10-08，Session 006）
+## 本轮（2026-10-08，Session 007）
 
 | 项 | 结果 |
 |---|---|
-| 目标 | 按用户进一步要求，将ARCHITECTURE收敛为后端九机制、对话存储、上下文压缩 |
-| 范围 | 仅文档；未改代码、配置或运行数据 |
-| 核对 | README九机制与后端源码对应；model-io存储说明由RELIABILITY移入ARCHITECTURE |
-| 导航 | 九机制表13处文件引用已改为相对Markdown链接，目标文件均存在 |
+| 目标 | 后端简化；保留九机制现有行为与未接通入口 |
+| 范围 | turn装配、消息/部件查询、响应聚合、model-io记录、审批等待及未使用代码 |
+| 复用 | model_call聚合响应并finally记录；authorize_tool统一权限与审批工时；主/子循环保持独立 |
+| 边界 | schema、权限顺序、工具范围、事件、压缩与重跑语义保持；真实运行数据未改 |
 | 机制差异 | Web未实现GoalLoop、任务板三轮提醒；技能目录函数未注入系统提示词 |
-| 验证 | 仅静态一致性/文档检查；按用户要求未启动、构建、pytest或E2E |
-| 功能清单 | 保留20项passing、1项deprecated及历史证据；新增文档复核说明 |
+| 验证 | 基线83 passed；简化后全量87 passed，新增4例；空库/假LLM，.tmp-data无残留；未启动真实服务 |
+| 功能清单 | 保留20项passing、1项deprecated及历史证据；refactoring_review记录本轮验证 |
 
-## 历史验证（不代表本轮重跑）
+## 历史验证
 
-- 上轮记录：pytest **83 passed**、前端build、权限专项E2E。
+- 前端build、权限专项E2E为Session 005历史证据；本轮后端pytest已重跑。
 - 已有能力：会话/回放、工具、审批/计划、子助手/任务板/技能、压缩、重新生成、日志/用量。
 - 原始证据见 feature_list.json 与 progress.md Session 005。
 
@@ -31,18 +31,18 @@
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
 | 规则/路径 | ask桶未加载；PowerShell无系统沙箱，glob未过safe_path | execution_state.py、permission_service.py、tools.py |
 
-既有限制：长会话全量回放；本机IAB点击自动化不稳定。当前文档工作无blocker。
+既有限制：长会话全量回放；本机IAB点击自动化不稳定。本轮简化无blocker。
 
 ## 下一步
 
-1. 开发时优先复现审批等待中的停止，再确认运行态/审批回放。
+1. 用户已追加前端视觉重构：使用design-taste-frontend技能，先审视现有页面，再设计与验收。
 2. 分项修复、补必要验证；既有passing不覆盖本轮发现的缺口。
 3. 保留契约：
    - 四表、稳定sequence、单Queue、审批工时、regenerate用量重算。
    - 三栏flex/Provider、子助手面板引用、model-io写失败不阻断对话。
    - 不迁移数据库；测试空库；UI截图验收；日志/密钥不入库。
 
-## 标准命令（本轮未执行）
+## 标准命令
 
 | 目录 | 命令 |
 |---|---|

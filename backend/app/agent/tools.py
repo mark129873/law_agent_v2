@@ -9,8 +9,6 @@
   因为存储层已无顶层 rubbish 目录——见 ARCHITECTURE §2.4）。
 """
 
-import os
-import re
 import shutil
 import subprocess
 from pathlib import Path

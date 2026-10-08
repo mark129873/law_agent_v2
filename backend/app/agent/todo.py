@@ -6,8 +6,6 @@
   todo_updated 事件；非法输入返回 Error 字符串（不落盘）。
 """
 
-from app.models import new_id
-
 VALID_STATUS = ("pending", "in_progress", "completed")
 MAX_ITEMS = 20
 

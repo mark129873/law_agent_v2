@@ -145,3 +145,25 @@ def test_model_io_rotation(monkeypatch, tmp_data_dir) -> None:
     assert len(files) >= 2  # 至少发生一次轮转（当前文件 + 归档文件）
     total = sum(len(f.read_text(encoding="utf-8").splitlines()) for f in files)
     assert total == 3  # 三条记录一条不丢
+
+
+def test_model_io_write_failure_does_not_fail_turn(recorder, tmp_data_dir, monkeypatch) -> None:
+    """只在测试沙箱构造不可写目录；调用快照失败仍能完成对话和回放。"""
+    import asyncio
+
+    from app.agent.loop import TurnDeps, run_turn
+    from app.sessions import replay
+
+    blocked = tmp_data_dir / "blocked-modelio"
+    blocked.write_text("这里是文件", encoding="utf-8")
+    monkeypatch.setattr(settings, "modelio_dir", blocked)
+
+    async def run():
+        return [e async for e in run_turn(TurnDeps(
+            client=FakeClient(), recorder=recorder, system_prompt="测试",
+            history=[{"role": "user", "content": "你好"}],
+        ))]
+
+    events = asyncio.run(run())
+    assert events[-1]["state"] == "success"
+    assert replay.load_replay(recorder.db, "s1")["turns"][0]["final_text"] == "回答"

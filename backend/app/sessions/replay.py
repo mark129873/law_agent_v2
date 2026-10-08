@@ -30,6 +30,27 @@ def _part_data(row: Part) -> dict:
     return _load(row.data)
 
 
+def _load_messages_and_parts(db: DbSession, session_id: str) -> tuple[list[Message], dict[str, list[Part]]]:
+    """共用有序查询；前端回放与模型历史各自转换，避免混入不同裁剪规则。"""
+    messages = list(
+        db.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.sequence.asc())
+        ).scalars()
+    )
+    parts_by_message: dict[str, list[Part]] = {}
+    if messages:
+        stmt = (
+            select(Part)
+            .where(Part.session_id == session_id, Part.message_id.in_([m.id for m in messages]))
+            .order_by(Part.sequence.asc())
+        )
+        for part in db.execute(stmt).scalars():
+            parts_by_message.setdefault(part.message_id, []).append(part)
+    return messages, parts_by_message
+
+
 def load_replay(
     db: DbSession, session_id: str, running_turn_ids: set[str] | None = None
 ) -> dict | None:
@@ -63,25 +84,7 @@ def load_replay(
             compactions.append({**data, "turn_id": turn_label})
 
     # --- 消息与部件 ---
-    messages = list(
-        db.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .order_by(Message.sequence.asc())
-        ).scalars()
-    )
-    parts_by_message: dict[str, list[Part]] = {}
-    if messages:
-        stmt = (
-            select(Part)
-            .where(
-                Part.session_id == session_id,
-                Part.message_id.in_([m.id for m in messages]),
-            )
-            .order_by(Part.sequence.asc())
-        )
-        for part in db.execute(stmt).scalars():
-            parts_by_message.setdefault(part.message_id, []).append(part)
+    messages, parts_by_message = _load_messages_and_parts(db, session_id)
 
     # --- 按 turn 分组（保持 message sequence 顺序即时间线顺序） ---
     turns: dict[str, dict] = {}
@@ -245,25 +248,7 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
       无论结果状态如何——模型必须看到自己发起的调用与结果才能续推）；
     - assistant 消息带 tool_use 时，紧跟一条合成的 user 消息承载 tool_result 块。
     """
-    messages = list(
-        db.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .order_by(Message.sequence.asc())
-        ).scalars()
-    )
-    parts_by_message: dict[str, list[Part]] = {}
-    if messages:
-        stmt = (
-            select(Part)
-            .where(
-                Part.session_id == session_id,
-                Part.message_id.in_([m.id for m in messages]),
-            )
-            .order_by(Part.sequence.asc())
-        )
-        for part in db.execute(stmt).scalars():
-            parts_by_message.setdefault(part.message_id, []).append(part)
+    messages, parts_by_message = _load_messages_and_parts(db, session_id)
 
     # compact 边界：取最后一次压缩的 before_sequence 与摘要文本
     cutoff_seq = 0
