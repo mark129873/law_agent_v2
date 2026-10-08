@@ -1,6 +1,12 @@
 {
   "project": "law_agent_v2",
   "description": "个人助手harness",
+  "documentation_review": {
+    "date": "2026-10-08",
+    "scope": "ARCHITECTURE、PRODUCT、RELIABILITY 精简并对照源码校准",
+    "verification": "仅静态核对；未启动、构建或运行测试；保留既有状态、证据与 testedAt",
+    "findings": "审批停止、刷新运行态/审批选项、工具事件、压缩接线缺口见 ARCHITECTURE §5/§8 与 session-handoff"
+  },
   "rules": {
     "single_active_feature": true,
     "passing_requires_evidence": true,
@@ -82,7 +88,7 @@
     {
       "id": "BE-009",
       "name": "重新生成",
-      "description": "按 sequence 回滚指定 turn 之后的行(软删标记)+保留用户消息重跑；错误重试复用同机制；边界测试",
+      "description": "重新生成最后一轮：保留用户消息，删除旧助手消息/部件/该轮事实并重跑；错误重试同机制，文件/命令副作用不回滚",
       "status": "passing",
       "evidence": "uv run pytest 63 passed：regenerate 全流程(旧回复与旧 turn 事实删除、用户消息保留并改挂新轮、新回复落盘、模型历史仅 user+新 assistant)/draft 会话 404/进行中 409；session_entry 增加 turn_id 列支撑按轮回滚",
       "testedAt": "2026-09-27"
@@ -122,7 +128,7 @@
     {
       "id": "FE-001",
       "name": "前端脚手架+三栏布局",
-      "description": "Vite+React18+TS+Tailwind v4、三栏布局(侧栏/对话流/subtask面板)、浅色 zinc 主题、中文 UI、api/client.ts(fetch+SSE 解析)、types.ts、Vite 代理 /api→8000、npm build 通过",
+      "description": "Vite+React19+TS+Tailwind v4、三栏布局(侧栏/对话流/subtask面板)、浅色 zinc 主题、中文 UI、fetch+SSE 解析与协议类型、Vite 代理 /api→8100",
       "status": "passing",
       "evidence": "npm run build 通过(Vite+React18+TS+Tailwind v4)；三栏布局、types.ts(SSE/回放契约)、api/client.ts(fetch+SSE 分帧解析)、useSessionStream 归约器、/api 代理 8100",
       "testedAt": "2026-09-28"
@@ -162,7 +168,7 @@
     {
       "id": "BE-011",
       "name": "subtask token 计入",
-      "description": "subtask 子循环的 usage 事件与主循环同口径处理：累计会话 tokens_used、发 token_count 事件、Langfuse 上报带 subtask_id 元数据",
+      "description": "subtask usage 与主循环同口径：输入/输出计入父轮与会话、发 token_count、model-io JSONL 调用快照带 subtask_id",
       "status": "passing",
       "evidence": "pytest 71 passed：新增 test_subtask_tokens_counted——token_count 事件序列(子50→主5)、会话累计 55 与 turn 事实一致、3 次 generation 中子循环那次 metadata 带 subtask_id 且 usage 正确、主循环调用不带；ARCHITECTURE §3/§6 已同步",
       "testedAt": "2026-10-01"

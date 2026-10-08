@@ -1,51 +1,52 @@
-# 会话交接 -- 在当前会话完成前, 记录本轮会话信息与下一轮推荐目标的交接文档
+# 会话交接
 
-## 当前已验证
+## 本轮（2026-10-08，Session 006）
 
-- 现在明确可用的部分：
-  - 后端 14 功能 + 前端 8 功能：BE-010(Langfuse) deprecated，BE-012(model-io JSONL)/BE-013(用量聚合)/**BE-014(权限管理体系 ZCode 复刻)** passing
-  - **权限体系**（ARCHITECTURE §4.2）：协作模式 build(变更前确认)/edit(自动编辑)/yolo(完全访问) 随提交生效（execution_state.json）+ planEnabled 独立标志；工具能力声明 + bash 只读命令降级；规则系统（permission_rules.json，deny/allow，`cmd:*` 前缀/通配/精确，高危根命令退化整条精确）；审批动态选项（allowOnce/fullAccess/allowAlways/deny + freeText 反馈喂回模型，子代理抑制 fullAccess）；计划模式（enter/exit_plan_mode 工具、计划文件 data/plans/、计划审批对话、系统提示词计划段注入、Composer 模式切换器随提交生效）
-  - 观测三层分工（ARCHITECTURE §3.0）：SQLite 会话事实（含 turn 级 input/output/context 三级 token 字段与会话双列累计）+ model-io JSONL（逐调用全量快照，`log/`）+ app.log 工程事件
-  - compact 预算已激活真实 input（deps.last_input_tokens 由主循环 usage 事件喂入，原死路径）；前端 TokenBadge 显示真实上下文占用（context_used/context_window+百分比）
-  - regenerate 回滚后由 recalc_session_usage 重算双列（修复被删轮 token 双算的潜伏 bug）
-  - 权限专项 E2E 4 项通过：计划全流程（进入→只读→exit→批准→实现）、edit 自动编辑、完全访问一键切 yolo、总是允许规则落盘 `echo:*`（截图 tmp/gui-verify/pm-*.png）；高危真实删除/越界/恢复项列清单留用户手测
-  - **回放审批留痕去重**：同一 request_id 只渲染最终状态一张卡（修复回放出现"等待批准"幽灵卡，与实时流单卡翻转一致；DB 仍双写事实）
-  - **侧栏新建草稿弹回修复**：Sidebar 创建路径漏登记 draftIdsRef 导致草稿页 404 弹回首页，已统一收敛到 handleDraftCreated（App.tsx）
-  - **UI 质感升级**：Composer 一体化浮动输入卡、欢迎页重排、侧栏选中竖条、token 层（tabular-nums/细滚动条/入场动画/圆角体系）、审批弹窗打磨——圆角与强调色体系见 ARCHITECTURE §7
-  - **E2E 全量回归通过**：mock LLM（tmp/mock_llm_server.py，零成本）驱动真实前后端 17+4 项场景——流式/markdown/工具执行/任务板/subtask 双路径/审批批准+拒绝/错误重试/停止/409/刷新恢复/跨会话并行/删除/Enter 系/model-io/用量聚合，全部通过（截图 tmp/gui-verify/e2e-*.png）
-  - 前端已有路由：`/` 欢迎页、`/session/:id` 会话视图；刷新/直链按地址恢复回放；未知与已删地址回首页，应用内新建的草稿留在空对话态
-  - 三栏壳层对齐 ZCode 工作台语义：左栏头部按钮开合（localStorage 记忆 `ui.sidebar`），右栏 subtask 面板点卡打开/X 收起/再点恢复
-  - 前端分包：markdown（react-markdown+highlight）在异步包，主包 284kB，无 Vite 告警
-- 这轮实际跑过的验证：`uv run pytest -q` **83 passed**（权限相关 +12）；`npm run build` 无告警；清库真实启动 + fixture 会话浏览器实测徽标（tmp/gui-verify/v4-usage-badge.png）；UI 回归靠截图视觉验收（本机 IAB 的 Playwright 点击不可靠，用 evaluate 触发）
+| 项 | 结果 |
+|---|---|
+| 目标 | 分析源码，精简 ARCHITECTURE / PRODUCT / RELIABILITY |
+| 范围 | 仅文档；未改代码、配置或运行数据 |
+| 核对 | mini_harness、核心后端、前端、测试源码、依赖声明、历史进度 |
+| 验证 | 仅静态一致性/文档检查；按用户要求未启动、构建、pytest或E2E |
+| 功能清单 | 保留20项passing、1项deprecated及历史证据；新增文档复核说明 |
 
-## 本轮改动
+## 历史验证（不代表本轮重跑）
 
-- 修复了哪些缺陷：
-  - docs/clean-state-checklist.md 顶部是 v1 遗留核对结果（Session 065/276测试/Milvus/RAG），已重写为 v2 自包含清单
-  - **布局回归（Session 004 踩坑）**：路由重构曾把三栏 flex 容器写成 Fragment，侧栏与主区垂直堆叠；DOM 断言查不出，截图发现后已修复。教训已写入 progress.md：UI 改动必须截图做视觉验收
-  - **regenerate token 双算（潜伏 bug）**：recalc_tokens_used 原是孤儿函数从未接线，回滚删事实后 session 累计不修正；已重写为 recalc_session_usage 并接线
-- 新增功能：路由与刷新恢复（FE-006）、subtask token 计入（BE-011）、代码分包（FE-007）、左/右栏可收起壳层（并入 FE-006）、model-io JSONL 逐调用记录（BE-012，替代 Langfuse）、用量聚合（BE-013）
-- 移除：Langfuse SDK 及全部接线（obs/config/main/pyproject/.env.example/test_obs.py）
+- 上轮记录：pytest **83 passed**、前端build、权限专项E2E。
+- 已有能力：会话/回放、工具、审批/计划、子助手/任务板/技能、压缩、重新生成、日志/用量。
+- 原始证据见 feature_list.json 与 progress.md Session 005。
 
-## 仍损坏或未验证
+## 未解决项
 
-- 当前blocker：无
-- 已知缺陷和风险：
-  - 历史消息全量加载，超长会话可能卡（分页/虚拟化留 v2，设计决策）
-  - 纯文本轮（无工具）不渲染工作块头——设计使然，若要"每轮都有块头"需产品决策
-  - 本机 IAB 自动化环境：Playwright locator 点击频繁 actionability 超时（evaluate 触发正常，产品无碍；GUI 回归时注意）
-- 未验证路径：无
-- 下一轮会话需要注意的风险：改 models.py 表结构后删除 backend/data/ 重启重建（不做 schema 迁移）；测试后确认 tests/.tmp-data 已清理（Windows 文件锁）；改前端布局必须截图验收；真实跑 turn 会写 log/（含对话正文，勿外传勿入库）
+以下由源码静态发现，**未运行复现、未修复**：
 
-## 下一步最佳动作
+| 优先核对 | 问题 | 位置 |
+|---|---|---|
+| 审批停止 | 等待不监听stop；弹窗无停止按钮 | approvals.py、turn_manager.py、ApprovalModal.tsx |
+| 运行态回放 | 路由传session id，回放按turn id判断 | api/sessions.py、replay.py |
+| 审批恢复 | 子助手fullAccess限制未持久化；重启可能弹出失效请求 | approvals.py、replay.py |
+| 工具呈现 | tool_started在执行结束后才发；自动放行无审批事实 | loop.py |
+| 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
+| 规则/路径 | ask桶未加载；PowerShell无系统沙箱，glob未过safe_path | execution_state.py、permission_service.py、tools.py |
 
-- 最高优先级未完成功能：真实使用打磨——工具卡 autoOpen、长会话分页/虚拟化
-- 为什么它是下一步：功能清单全部 passing/deprecated 且无未验证路径，进入打磨期
-- 什么结果才算 passing：按 feature_list 对应项补充证据（分页需大数据量会话实测）
-- 这一步中哪些东西不要动：存储层契约（四表/回放结构）、SSE 事件类型、工作块状态机、_turn_sse_response 的单队列约定（审批事件依赖它）、ShellContext 的 Provider 包裹层级（掉了会复现布局堆叠）、modelio.py 的吞异常纪律（观测不能挡主流程）、recalc_session_usage 与 regenerate 的接线（删了会复发 token 双算）
+既有限制：长会话全量回放；本机IAB点击自动化不稳定。当前文档工作无blocker。
 
-## 命令
+## 下一步
 
-- 启动命令：后端 `cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8100`；前端 `cd frontend && npm run dev`（http://localhost:5173）
-- 验证命令：`cd backend && uv run pytest -q`；`cd frontend && npm run build`
-- 定向调试命令：后端日志 `backend/data/logs/app.log`；逐调用 LLM 快照 `log/model-io-<session_id>.jsonl`；LLM 配置校验失败看 POST /turn 的 400 detail；路由验证可用 `tmp/make_session_fixture.py` 直造夹具会话（不烧 LLM）
+1. 开发时优先复现审批等待中的停止，再确认运行态/审批回放。
+2. 分项修复、补必要验证；既有passing不覆盖本轮发现的缺口。
+3. 保留契约：
+   - 四表、稳定sequence、单Queue、审批工时、regenerate用量重算。
+   - 三栏flex/Provider、子助手面板引用、model-io写失败不阻断对话。
+   - 不迁移数据库；测试空库；UI截图验收；日志/密钥不入库。
+
+## 标准命令（本轮未执行）
+
+| 目录 | 命令 |
+|---|---|
+| backend/ | uv run uvicorn app.main:app --host 127.0.0.1 --port 8100 |
+| frontend/ | npm run dev（默认localhost:5173） |
+| backend/ | uv run pytest -q |
+| frontend/ | npm run build |
+
+调试：backend/data/logs/app.log；`log/model-io-<session_id>.jsonl`。启动/测试环境见 init.md、RELIABILITY.md。

@@ -1,57 +1,52 @@
-# RELIABILITY.md -- 可观测性与测试纪律
+# RELIABILITY — 运行与验证纪律
 
-> 分工：日志/Langfuse/测试干净环境的**约定与强制约束**；系统实现见 `ARCHITECTURE.md` §9。
+> 实现：[ARCHITECTURE.md](ARCHITECTURE.md)；行为：[PRODUCT.md](PRODUCT.md)。
 
-## 1. 日志（logging 双通道）
+## 1. 日志
 
-| 通道 | 说明 |
-|---|---|
-| 控制台 | 人读格式 |
-| 滚动文件 | `backend/data/logs/app.log`（单文件 5MB，保留 5 份） |
-
-| 级别 | 语义 | 示例 |
+| 通道 | 内容 | 轮转 |
 |---|---|---|
-| ERROR | 需要人处理的异常 | 错误堆栈 |
-| WARNING | 可自动恢复的异常 | 反应式压缩重试、Langfuse 上报失败 |
-| INFO | 生命周期事件 | turn 开始/收口（turn_id+工时）、工具调用与耗时、审批请求与结果、压缩发生 |
-| DEBUG | 开发期细节 | **默认关闭** |
+| 控制台 + backend/data/logs/app.log | 工程事件/id：轮次、工具、审批、压缩、异常；不记对话正文 | 5MB，保留5份备份 |
+| `log/model-io-<session_id>.jsonl` | 主/子循环调用快照；不参与回放；摘要调用未接入 | 默认10MB，追加前检查；纳秒后缀归档 |
 
-- 记录内容：工程事件 + id；**不记录**用户输入与模型回复正文（正文属于数据库与 model-io JSONL 的职责，双系统不重复）。
-- httpx / anthropic 等三方库降噪至 WARNING。
+- 级别：ERROR异常堆栈；WARNING可恢复异常；INFO生命周期；DEBUG默认关闭。
+- httpx/httpcore/urllib3/anthropic 降至WARNING；Langfuse已移除。
+- model-io：成功/失败均一调用一行。
+  - 标识/耗时/错误；system/messages全文、工具名；正文/tool_calls；输入/输出/缓存计量。
+  - MODELIO_DIR改目录；MODELIO_MAX_MB默认10。
+  - 写失败吞异常、记WARNING，**不得阻断对话**；含正文，**不得提交或外传**。
 
-## 2. model-io JSONL（逐调用 LLM 快照）
+## 2. 干净环境
 
-| 项 | 约定 |
+| 场景 | 强制纪律 |
 |---|---|
-| 位置 | 项目根 `log/model-io-<session_id>.jsonl`（不入库；`MODELIO_DIR` 可覆盖，测试指向 `.tmp-data/`） |
-| 粒度 | **一次 LLM 调用一行 JSON**（追加写）：完整 system prompt、messages 快照、tool 名称、response 文本与 tool_calls、input/output tokens、缓存读写计量、耗时、错误 |
-| 轮转 | 单文件超过 `MODELIO_MAX_MB`（默认 10MB）自动改名归档（纳秒后缀防碰撞），记录零丢失 |
-| 范围 | 主循环与 subtask 子循环都记（子循环行带 subtask_id） |
-| 失败语义 | 写入失败吞异常记 WARNING，**永不影响对话主流程** |
-| 纪律 | 该目录属运行时产物，绝不提交；含对话正文，勿外传 |
+| pytest | 导入app前注入DATA_DIR到backend/tests/.tmp-data/；MODELIO_DIR到其下modelio/ |
+| 每测 | 空目录/空库；结束释放SQLite/日志句柄，再删.tmp-data/ |
+| 手测/E2E | 启动真实后端前清空backend/data/；仅构造测试数据 |
+| 收尾 | .tmp-data/无残留；pytest不触碰真实data/workspace/log |
 
-## 3. 测试干净环境管理
+**不迁移数据库**：改models.py表结构→删除backend/data/→重启建表；会话、工作区、规则、计划一并清除。
 
-> 目标：测试从已知空白状态启动，杜绝历史遗留数据干扰。
+### 高风险测试
 
-| 场景 | 纪律 |
+1. **模型**：自动化一律假LLM，禁止真实付费API；真实调用仅限人工手动验证。
+2. **目录**：pytest只用backend/tests/.tmp-data/；禁止触碰真实数据、workspace、用户文件。
+   - 手测/E2E使用上述清库环境。
+3. **命令**：仅白名单安全命令，如echo；禁止真实删除、格式化、危险网络命令。
+   - 删除逻辑用mock或专用测试沙箱。
+4. **破坏性逻辑**：压缩/软删必须验证数据可回放/可恢复，仅用测试目录构造数据。
+   - 核对摘要/当前请求、软删标记、回放过滤已删会话；不得削弱断言。
+
+## 3. 验证与收尾
+
+| 改动 | 检查 |
 |---|---|
-| pytest | 数据目录经 `DATA_DIR` 环境变量注入（conftest 在导入 app 前设置），指向 `backend/tests/.tmp-data/`；model-io 目录同理经 `MODELIO_DIR` 注入；**每个测试前清空重建，测试后必须删除**（teardown） |
-| 浏览器手测 / E2E | 启动真实后端前先清空 `backend/data/`（生产语义即"改表/发版 = 清库重建"，产品决策 2026-09-28：不做 schema 迁移） |
-| 测试后核对 | `.tmp-data/` 已删除（Windows 文件锁时先释放 SQLite/日志句柄）；真实 `backend/data/` 未被测试触碰 |
+| 后端 | backend/：uv run pytest -q |
+| 前端 | frontend/：npm run build；主包<500kB告警阈值 |
+| UI/交互 | 浏览器实测 + 截图视觉验收 |
+| 纯文档 | 核对源码/链接/差异；明确未跑运行验证 |
 
-### 高风险测试强制约束
-
-1. **假 LLM**：单元/集成测试一律使用假 LLM（mock 客户端 + 预录假流式序列），禁止真实调用付费 API；真实调用仅允许人工手动验证。
-2. **测试目录**：只用 `backend/tests/.tmp-data/`；禁止测试触碰真实数据目录、workspace、用户文件。
-3. **执行类测试**：仅跑白名单安全命令（如 `echo`）；禁止测试真实的删除、格式化、网络危险命令；删除逻辑用 mock 或专用测试沙箱验证。
-4. **破坏性操作**：压缩、软删等测试必须验证"数据可回放/可恢复"（软删标记正确、回放不出现已删会话），且使用测试目录内构造的数据。
-
-## 4. 基准测试
-
-```bash
-cd backend && uv run pytest -q    # 全量基线（当前通过数见 docs/progress.md 最新 Session）
-cd frontend && npm run build      # 前端类型检查 + 构建（主包应低于 500kB 告警阈值）
-```
-
-（性能基准待补：compact 耗时、全量回放耗时。）
+- 标准启动见[init.md](init.md)：单后端进程、仅127.0.0.1:8100；PowerShell无系统沙箱。
+- 证据见[progress.md](progress.md)、[feature_list.json](feature_list.json)；静态缺口见ARCHITECTURE §8，未复现不得宣称通过。
+- 收尾同步progress/feature_list/session-handoff；核对clean-state-checklist并提交；密钥、运行数据、构建产物不入库。
+- 性能基准待补：压缩/全量回放耗时。

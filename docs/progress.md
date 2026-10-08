@@ -123,5 +123,19 @@
 - 追加（同日，UI 质感升级 design-taste pass）：**preserve 模式视觉重设计**（不换主题身份、不动 IA）——① token 层：tabular-nums、细滚动条、selection/focus-visible 强调色、消息入场 animate-enter（reduced-motion 尊重）；② Composer 重设计为一体化浮动输入卡（rounded-2xl 容器+focus-within ring+圆形发送钮，生成中方形停止钮）；③ 欢迎页排版重排（标题层级+四项能力内联图标行+hairline+"数据仅保存在本机"脚注）；④ 侧栏选中态 sky 竖条、空状态弱化；⑤ 工作块头 hover、审批卡 em-dash 改 ·；⑥ 审批弹窗 backdrop-blur+Warning 图标+入场动画；⑦ 圆角体系写入文档（按钮 lg/卡片 xl/输入卡 2xl）。**视觉验收抓出并修复 1 个路由回归**：侧栏新建草稿未登记 draftIdsRef，草稿页 404 被当未知会话弹回首页（欢迎页路径有登记故 E2E 未暴露）——统一收敛到 handleDraftCreated。截图 ui-1~4 + ui-3-draft-fixed.png。build 通过
 - 追加（同日，权限体系复刻 5 轮 ZCode 源码深研后实施，分 4 commit）：**ZCode PermissionService 全套复刻**——阶段1 权限内核（permission_service.py：11 工具能力声明/bash 只读命令运行时降级/评估顺序硬拒→plan进出→yolo(plan失效)→deny规则→ask规则→plan只读其余DENY→allow规则→edit→build；execution_state.py 持久化 mode/planEnabled+规则集；permissions.py 退役，删除类词表由 build high-risk ask 替代）；阶段2 审批选项流（动态选项 allowOnce/fullAccess/allowAlways/deny+freeText 反馈喂回；"总是允许"落盘规则文件，高危根命令退化整条精确；fullAccess 一键切 yolo；子代理抑制 fullAccess）；阶段3 计划模式（enter/exit_plan_mode 工具+计划文件 data/plans/+计划审批对话 markdown 渲染+系统提示词计划段注入+Composer 模式切换器随提交生效）；阶段4 E2E（P1 计划全流程/P2 edit 自动编辑/P3 完全访问一键+真实执行/P4 总是允许规则落盘 echo:*）。pytest **83 passed**（+12 权限相关），npm build 通过，截图 pm-1~5。**测试纪律**：自动化全程无高危操作（ask 触发用无害 echo 重定向）；高危真实删除/越界/恢复项列清单留用户手测。环境事故两起（前后端进程静默死亡+mock 计数器串场）已重启排除，非产品问题
 
+### Session 006
+
+- 日期：2026-10-08
+- 目标：分析项目，简洁重写 ARCHITECTURE / PRODUCT / RELIABILITY；仅文档。
+- 完成：
+  - 用表格与分级列表整理职责、四表/回放、循环/权限、压缩、API/SSE、前端与验证纪律。
+  - 按源码校准React19、JSONL替代Langfuse、子助手工具/审批、压缩事实与用量边界。
+  - 静态发现审批停止、运行态/审批恢复、工具事件、压缩接线缺口；未复现、未修复，已入交接。
+- 验证：源码与文档静态核对、链接/JSON/差异检查；用户明确免启动验证，未运行启动、build、pytest或E2E。
+- 功能清单：20项passing、1项deprecated；保留状态、历史证据与testedAt，仅校正过时描述、追加复核记录。
+- 收尾：按clean-state-checklist核对文档/仓库卫生；Session数6、passing数20；无代码/运行数据/敏感文件改动，启动测试项本轮不适用。
+- 提交：docs: 精简架构、产品与可靠性文档并校准实现边界。
+- 下一步：优先复现审批停止与回放运行态问题，再按单功能规则修复。
+
 
 
