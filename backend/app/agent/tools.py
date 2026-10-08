@@ -152,42 +152,6 @@ def tool_load_skill(name: str) -> str:
     return _impl(name)
 
 
-def tool_enter_plan_mode() -> str:
-    """进入计划模式：planEnabled 置真（免确认由评估的 plan 进出特判保证）。"""
-    from app.sessions import execution_state
-
-    state = execution_state.load_execution_state(settings.data_dir)
-    execution_state.save_execution_state(settings.data_dir, state["mode"], True)
-    return (
-        "已进入计划模式。接下来只做只读探索与方案设计：不要写/改/删任何文件，"
-        "不要执行有副作用的命令。按四阶段推进——①只读探索 → ②设计方案权衡 → "
-        "③复查 → ④用 exit_plan_mode 提交完整计划（markdown）。"
-    )
-
-
-def tool_exit_plan_mode(plan: str) -> str:
-    """退出计划模式：写计划文件归档 + planEnabled 置假。
-
-    注意：本 handler 在用户批准后才被调用（评估为 ask → 交互审批通过）。
-    """
-    import time
-
-    from app.sessions import execution_state
-
-    state = execution_state.load_execution_state(settings.data_dir)
-    if not state["plan_enabled"]:
-        return "Error: 当前不在计划模式中"
-    plans_dir = settings.data_dir / "plans"
-    plans_dir.mkdir(parents=True, exist_ok=True)
-    plan_file = plans_dir / f"plan-{int(time.time() * 1000)}.md"
-    plan_file.write_text(plan, encoding="utf-8")
-    execution_state.save_execution_state(settings.data_dir, state["mode"], False)
-    return (
-        "用户已批准计划。请立即按计划开始实现。\n\n"
-        "## 已批准的计划：\n\n" + plan
-    )
-
-
 # ---------- 双表注册 ----------
 
 TOOL_HANDLERS: dict[str, Callable[..., str]] = {
@@ -198,8 +162,6 @@ TOOL_HANDLERS: dict[str, Callable[..., str]] = {
     "glob": tool_glob,
     "delete_file": tool_delete_file,
     "load_skill": tool_load_skill,
-    "enter_plan_mode": tool_enter_plan_mode,
-    "exit_plan_mode": tool_exit_plan_mode,
 }
 
 
@@ -267,17 +229,6 @@ TOOLS: list[dict] = [
     _schema(
         "subtask", "派出子助手独立完成一个目标（有自己的工具循环），返回其最终汇报。",
         {"goal": {"type": "string", "description": "子助手要完成的单一目标，要写得具体"}}, ["goal"],
-    ),
-    _schema(
-        "enter_plan_mode",
-        "进入计划模式：只读探索与方案设计，不做任何有副作用的操作。",
-        {}, [],
-    ),
-    _schema(
-        "exit_plan_mode",
-        "提交实施计划并请求用户批准；用户批准后退出计划模式、按计划开始实现。",
-        {"plan": {"type": "string", "description": "完整的实施计划（markdown）"}},
-        ["plan"],
     ),
 ]
 

@@ -2,7 +2,7 @@
  * 输入卡：先写目标，再选择执行方式。权限选择只改变本地草稿，随发送生效。
  * Enter 发送、Shift+Enter 换行；中文输入法正在组字时，Enter 不能误发。
  */
-import { ArrowUp, CaretDown, Check, Hand, Notepad, ShieldCheck, ShieldWarning, Square, X } from '@phosphor-icons/react'
+import { ArrowUp, CaretDown, Check, Hand, ShieldCheck, ShieldWarning, Square } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import type { ExecutionDraft, PermissionState } from '../api/client'
 
@@ -22,7 +22,6 @@ const MODE_META: Record<string, { label: string; icon: typeof Hand; hint: string
 export function Composer({ disabled, streaming, permission, onSend, onStop }: ComposerProps) {
   const [text, setText] = useState('')
   const [draftMode, setDraftMode] = useState(permission.mode)
-  const [draftPlan, setDraftPlan] = useState(permission.plan_enabled)
   const [menuOpen, setMenuOpen] = useState(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -31,8 +30,7 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
   // 服务端状态可能因审批改变；得到权威回显后再同步，不提前写全局权限。
   useEffect(() => {
     setDraftMode(permission.mode)
-    setDraftPlan(permission.plan_enabled)
-  }, [permission.mode, permission.plan_enabled])
+  }, [permission.mode])
   useEffect(() => {
     if (!menuOpen) return
     const onDown = (e: MouseEvent) => {
@@ -52,7 +50,7 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
   const trySend = () => {
     const trimmed = text.trim()
     if (!trimmed || disabled || streaming) return
-    onSend(trimmed, { mode: draftMode, plan_enabled: draftPlan })
+    onSend(trimmed, { mode: draftMode })
     setText('')
     areaRef.current?.focus()
   }
@@ -65,7 +63,7 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
       <div className={`composer-card ${disabled ? 'opacity-60' : ''}`}>
         <textarea ref={areaRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); trySend() }
-        }} rows={2} disabled={disabled} aria-label="消息" placeholder={disabled ? '新建或选择会话开始对话' : draftPlan ? '描述想要探索和规划的目标…' : '描述你的目标，或继续这段对话…'} className="composer-input block" />
+        }} rows={2} disabled={disabled} aria-label="消息" placeholder={disabled ? '新建或选择会话开始对话' : '描述你的目标，或继续这段对话…'} className="composer-input block" />
         <div className="mt-3 flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <div ref={menuRef} className="relative" onKeyDown={(e) => {
@@ -76,12 +74,6 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
               </button>
               {menuOpen && <div id="execution-menu" role="group" aria-label="执行模式" className="floating-menu absolute bottom-full left-0 z-20 mb-3 w-72 max-w-[calc(100vw-48px)] rounded-xl bg-white p-2">
                 <p className="px-3 pb-2 pt-1 text-[11px] font-medium text-zinc-500">随下一条消息生效</p>
-                <button type="button" aria-pressed={draftPlan} onClick={() => setDraftPlan(!draftPlan)} className="flex w-full items-center gap-3 rounded-lg p-3 text-left hover:bg-zinc-50">
-                  <Notepad size={18} className="shrink-0 text-zinc-600" />
-                  <span className="flex-1 text-[13px] font-medium text-zinc-800">计划模式<span className="mt-1 block text-[11px] font-normal leading-5 text-zinc-600">先只读探索，计划获批后再实现</span></span>
-                  {draftPlan && <Check size={16} weight="bold" className="text-accent-700" />}
-                </button>
-                <div className="mx-3 my-1 border-t border-zinc-100" />
                 {Object.entries(MODE_META).map(([mode, item]) => {
                   const Icon = item.icon
                   return <button key={mode} type="button" aria-pressed={draftMode === mode} onClick={() => { setDraftMode(mode); setMenuOpen(false); modeButtonRef.current?.focus() }} className={`flex w-full items-center gap-3 rounded-lg p-3 text-left hover:bg-zinc-50 ${draftMode === mode ? 'bg-accent-50' : ''}`}>
@@ -92,7 +84,6 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
                 })}
               </div>}
             </div>
-            {draftPlan && <button type="button" onClick={() => setDraftPlan(false)} title="取消计划模式" aria-label="取消计划模式" className="flex h-8 items-center gap-1.5 rounded-lg bg-accent-50 px-2.5 text-[12px] font-medium text-accent-700 hover:bg-accent-100"><Notepad size={14} />计划模式<X size={12} weight="bold" /></button>}
           </div>
           {streaming ? (
             <button type="button" onClick={onStop} title="停止生成" aria-label="停止生成" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-300 text-zinc-700 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"><Square size={14} weight="fill" /></button>

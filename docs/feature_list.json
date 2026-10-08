@@ -124,11 +124,11 @@
     },
     {
       "id": "BE-014",
-      "name": "权限管理体系(ZCode 复刻)",
-      "description": "协作模式随提交生效(build 变更前确认/edit 自动编辑/yolo 完全访问+planEnabled 独立标志)+工具能力声明(bash 只读降级)+规则系统(deny/allow/ask,cmd:* 前缀/通配/精确,高危根命令退化精确)+计划模式(enter/exit_plan_mode+计划文件+审批对话)+审批动态选项(allowOnce/fullAccess/allowAlways/deny+freeText 反馈)",
-      "status": "passing",
-      "evidence": "pytest 83 passed(+12: 评估矩阵/规则匹配/Bash降级/高危退化/plan工具流/系统提示注入/选项流/fullAccess切yolo/allowAlways落盘/未知兜底)；E2E 截图 pm-1~5：模式切换器、计划审批弹窗(markdown 渲染)、四选项弹窗(完全访问警示/规则预览)、批准后 planEnabled 复位与计划文件落盘、edit 模式 write_file 免弹窗、总是允许规则落盘 echo:*；高危真实删除项留用户手测",
-      "testedAt": "2026-10-04"
+      "name": "权限管理体系（build/edit/yolo）",
+      "description": "三种协作模式随提交生效；工具能力、命令只读降级、allow/deny规则、普通审批与拒绝反馈。独立Plan模式已移除；保留todo与子助手。",
+      "status": "blocked",
+      "evidence": "本轮专项12过，全量91过/3既有Linux环境失败；build通过，lint原有5警告。Plan生产引用清零，普通审批与任务板/历史回放已离线验证；浏览器ERR_BLOCKED_BY_CLIENT未验。历史权限证据见progress Session 005。",
+      "testedAt": "2026-10-08"
     },
     {
       "id": "BE-013",
@@ -202,5 +202,12 @@
       "evidence": "npm run build：index 284.40kB + Markdown 异步包 284.35kB(此前主包 568.79kB 超阈值告警，现已无告警)；浏览器实测回放 markdown 渲染与复制按钮正常(lazy 链路加载成功)",
       "testedAt": "2026-10-01"
     }
-  ]
+  ],
+  "plan_removal_review": {
+    "date": "2026-10-08",
+    "scope": "删除独立Plan全链路；保留todo、三模式、普通审批和聊天历史",
+    "status": "blocked",
+    "evidence": "假LLM专项12过；全量91过/3既有失败，origin/main同环境84过/同3失败。build通过361.83kB；lint原有5警告。浏览器ERR_BLOCKED_BY_CLIENT未完成验收，原因未确认；无真实模型调用。",
+    "boundaries": "UI待验；PowerShell缺失2项、Linux Windows盘符断言1项未扩修；此checkout无旧历史，无迁移/清理工具"
+  }
 }

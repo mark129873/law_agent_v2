@@ -22,7 +22,7 @@
 | 纯UI验收 | 可用独立内存API/假SSE；不连接真实后端、数据库或模型；截图明确为模拟数据 |
 | 收尾 | .tmp-data/无残留；pytest不触碰真实data/workspace/log |
 
-**不迁移数据库**：改models.py表结构→删除backend/data/→重启建表；会话、工作区、规则、计划一并清除。
+**不迁移数据库**：改models.py表结构→删除backend/data/→重启建表；会话、工作区、规则一并清除。
 
 ### 高风险测试
 

@@ -179,3 +179,19 @@
 
 
 
+### Session 009
+
+- 日期：2026-10-08
+- 目标：按用户要求移除独立Plan模式；云电脑dot分支开发并推送，main不改。
+- 过程：先读AGENTS、mini_harness与项目文档，参考ZCode执行状态；先更新PRODUCT/ARCHITECTURE，再串行实现。
+- 完成：删除Plan开关、请求/执行状态字段、进出工具、系统提示注入、专用审批与计划归档；保留todo、build/edit/yolo、普通审批、子助手与聊天历史。未新增历史兼容或迁移。
+- 数据：开始时此checkout没有backend/data或log，无旧历史/计划可清理；只生成离线测试数据，未读取或修改凭据。
+- 验证：
+  - 锁文件安装依赖；假模型/隔离空库。origin/main同环境复测84过/3失败；本轮全量91过/同3失败，新增执行模式专项12过。
+  - 既有失败：缺powershell使echo与批准后Remove-Item失败；Linux把C:/路径视为工作区内相对目录，Windows盘符越界断言失败。没有跳过、改弱断言或扩修跨平台。
+  - build通过，主包361.83kB；lint 0错误/原有5警告；生产源码无Plan标志/工具/审批残留。
+  - 标准uvicorn 127.0.0.1:8100启动成功；health=ok、sessions=[]、permission/state仅mode=build；正常停止。
+  - 云浏览器两次尝试未完成：首次权限检查dismiss，随后ERR_BLOCKED_BY_CLIENT，原因未确认；未改路绕过，没有截图或UI通过结论。
+- 收尾：文档/JSON/差异核对；.tmp-data无残留；临时服务停止；测试/依赖/构建产物不入库。功能复核标blocked，保留浏览器验收缺口，不宣称全部完成。
+- 提交：refactor: 移除独立Plan模式并保留普通权限流程。
+- 下一步：可访问测试页面后补浏览器模式切换/普通审批验收；Windows环境复测既有PowerShell与路径断言。

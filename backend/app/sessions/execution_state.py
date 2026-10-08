@@ -1,4 +1,4 @@
-"""执行状态（协作模式+计划标志）与权限规则的本地持久化。
+"""执行状态（协作模式）与权限规则的本地持久化。
 
 为什么用 JSON 文件而非四表：模式/规则是**用户偏好**，不是会话事实——
 单项目单用户下文件等价于 ZCode 的 local_setting(scope=project)，
@@ -11,7 +11,7 @@
 import json
 from pathlib import Path
 
-_MODES = ("build", "edit", "yolo")  # plan 不是 mode，是 planEnabled 标志
+_MODES = ("build", "edit", "yolo")
 _DEFAULT_RULES = {"version": 1, "allow": [], "deny": []}
 
 
@@ -29,20 +29,19 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def load_execution_state(data_dir) -> dict:
-    """读执行状态；mode 只认 build/edit/yolo，plan_enabled 独立布尔。"""
+    """读执行状态；mode 只认 build/edit/yolo。"""
     data = _read_json(Path(data_dir) / "execution_state.json") or {}
     mode = data.get("mode")
     return {
         "mode": mode if mode in _MODES else "build",
-        "plan_enabled": bool(data.get("plan_enabled", False)),
     }
 
 
-def save_execution_state(data_dir, mode: str, plan_enabled: bool) -> dict:
-    """写执行状态（mode 必须是三值之一；plan_enabled 独立）。返回落盘后的状态。"""
+def save_execution_state(data_dir, mode: str) -> dict:
+    """写执行状态（mode 必须是三值之一）。返回落盘后的状态。"""
     if mode not in _MODES:
         raise ValueError(f"非法协作模式：{mode}")
-    state = {"mode": mode, "plan_enabled": bool(plan_enabled)}
+    state = {"mode": mode}
     _write_json(Path(data_dir) / "execution_state.json", state)
     return state
 

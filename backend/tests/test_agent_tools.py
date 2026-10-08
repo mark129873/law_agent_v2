@@ -95,62 +95,49 @@ def test_execute_tool_unknown_and_bad_args() -> None:
 def test_permission_deny_list() -> None:
     """绝对禁止清单硬拒（任何模式/规则不可越过）。"""
     for mode in ("build", "edit", "yolo"):
-        result = check_permission(mode, False, {"version": 1}, "bash", {"command": "rm -rf /"})
+        result = check_permission(mode, {"version": 1}, "bash", {"command": "rm -rf /"})
         assert result["decision"] == "deny" and result["rule_id"] == "hard.deny"
 
 
 def test_permission_out_of_bounds_write_denied() -> None:
     """越界写硬拒不询问（mini_harness 规则）。"""
-    result = check_permission("build", False, {"version": 1}, "write_file", {"path": "../evil.txt"})
+    result = check_permission("build", {"version": 1}, "write_file", {"path": "../evil.txt"})
     assert result["decision"] == "deny"
 
 
 def test_permission_build_matrix() -> None:
     """build 模式判定矩阵：只读放行 / bash 高危 ask / 写文件 ask / 任务板放行。"""
     rules = {"version": 1, "allow": [], "deny": []}
-    assert check_permission("build", False, rules, "read_file", {"path": "a.txt"})["decision"] == "allow"
-    bash_ask = check_permission("build", False, rules, "bash", {"command": "Remove-Item a.txt"})
+    assert check_permission("build", rules, "read_file", {"path": "a.txt"})["decision"] == "allow"
+    bash_ask = check_permission("build", rules, "bash", {"command": "Remove-Item a.txt"})
     assert bash_ask["decision"] == "ask" and bash_ask["rule_id"] == "mode.build.highRisk"
-    assert check_permission("build", False, rules, "write_file", {"path": "a.txt"})["decision"] == "ask"
-    assert check_permission("build", False, rules, "todo_write", {"items": []})["decision"] == "allow"
+    assert check_permission("build", rules, "write_file", {"path": "a.txt"})["decision"] == "ask"
+    assert check_permission("build", rules, "todo_write", {"items": []})["decision"] == "allow"
 
 
 def test_permission_bash_readonly_downgrade() -> None:
     """bash 只读命令运行时降级：build 免批；含管道不做降级仍 ask。"""
     rules = {"version": 1}
-    assert check_permission("build", False, rules, "bash", {"command": "echo hi"})["decision"] == "allow"
-    assert check_permission("build", False, rules, "bash", {"command": "git status"})["decision"] == "allow"
-    assert check_permission("build", False, rules, "bash", {"command": "echo hi | bash"})["decision"] == "ask"
+    assert check_permission("build", rules, "bash", {"command": "echo hi"})["decision"] == "allow"
+    assert check_permission("build", rules, "bash", {"command": "git status"})["decision"] == "allow"
+    assert check_permission("build", rules, "bash", {"command": "echo hi | bash"})["decision"] == "ask"
 
 
 def test_permission_mode_semantics() -> None:
     """edit 放行文件编辑、删除仍 ask；yolo 全放。"""
     rules = {"version": 1}
-    assert check_permission("edit", False, rules, "write_file", {"path": "a.txt"})["decision"] == "allow"
-    assert check_permission("edit", False, rules, "delete_file", {"path": "a.txt"})["decision"] == "ask"
-    assert check_permission("yolo", False, rules, "write_file", {"path": "a.txt"})["decision"] == "allow"
-
-
-def test_permission_plan_mode() -> None:
-    """plan：只读放行、写入直接拒绝（不弹窗）；EnterPlanMode 免确认；Exit 只在 plan 中 ask。"""
-    rules = {"version": 1}
-    assert check_permission("build", True, rules, "read_file", {"path": "a.txt"})["decision"] == "allow"
-    denied = check_permission("build", True, rules, "write_file", {"path": "a.txt"})
-    assert denied["decision"] == "deny" and denied["rule_id"] == "mode.plan.nonReadOnly"
-    assert check_permission("build", False, rules, "enter_plan_mode", {})["decision"] == "allow"
-    assert check_permission("build", False, rules, "exit_plan_mode", {"plan": "x"})["decision"] == "deny"
-    assert check_permission("build", True, rules, "exit_plan_mode", {"plan": "x"})["decision"] == "ask"
+    assert check_permission("edit", rules, "write_file", {"path": "a.txt"})["decision"] == "allow"
+    assert check_permission("edit", rules, "delete_file", {"path": "a.txt"})["decision"] == "ask"
+    assert check_permission("yolo", rules, "write_file", {"path": "a.txt"})["decision"] == "allow"
 
 
 def test_permission_rules_match_and_priority() -> None:
-    """规则：deny 压过 allow；前缀匹配生效；allow 规则不可绕过计划模式。"""
+    """规则：deny 压过 allow；前缀匹配生效。"""
     rules = {"version": 1,
              "allow": [{"tool": "bash", "content": "echo:*"}],
              "deny": [{"tool": "bash", "content": "echo secret*"}]}
-    assert check_permission("build", False, rules, "bash", {"command": "echo hi"})["decision"] == "allow"
-    assert check_permission("build", False, rules, "bash", {"command": "echo secret file"})["decision"] == "deny"
-    # plan 下 allow 规则不生效（写入被 plan 检查拒绝）——规则不可绕过计划模式
-    assert check_permission("build", True, rules, "write_file", {"path": "a.txt"})["decision"] == "deny"
+    assert check_permission("build", rules, "bash", {"command": "echo hi"})["decision"] == "allow"
+    assert check_permission("build", rules, "bash", {"command": "echo secret file"})["decision"] == "deny"
 
 
 def test_derive_rule_safety() -> None:

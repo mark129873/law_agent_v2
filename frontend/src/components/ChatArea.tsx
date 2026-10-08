@@ -27,7 +27,7 @@ export interface ChatAreaProps {
   isStreaming: boolean
   currentId: string | null
   streamError: string | null
-  /** 当前执行状态（模式/计划标志）：模式切换器初值与回显 */
+  /** 当前执行状态（模式）：模式切换器初值与回显 */
   permission: PermissionState
   /** 实时流中的未决审批（useSessionStream） */
   livePendingApproval: LivePendingApproval | null

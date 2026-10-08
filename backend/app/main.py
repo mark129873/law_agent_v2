@@ -49,7 +49,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/permission/state")
     def permission_state() -> dict:
-        """当前执行状态（协作模式+计划标志）：前端模式切换器的初值来源。"""
+        """当前执行状态（协作模式）：前端模式切换器的初值来源。"""
         from app.sessions import execution_state
 
         return execution_state.load_execution_state(settings.data_dir)

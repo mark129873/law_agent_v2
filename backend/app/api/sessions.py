@@ -39,13 +39,12 @@ _SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[1] / "agent" / "system_pr
 class TurnIn(BaseModel):
     """POST /turn 请求体。
 
-    mode/plan_enabled：协作模式随提交生效（ZCode resolveSubmittedExecutionState
+    mode：协作模式随提交生效（ZCode resolveSubmittedExecutionState
     语义）；缺省沿用当前执行状态。
     """
 
     text: str
     mode: str | None = None
-    plan_enabled: bool | None = None
 
 
 def get_llm_client() -> object:
@@ -53,25 +52,9 @@ def get_llm_client() -> object:
     return build_client(settings)
 
 
-def _load_system_prompt(plan_enabled: bool) -> str:
-    """每次 turn 现读系统提示词文件：改动对其后的轮次立即生效（产品决策）。
-
-    计划模式启用时追加只读约束与四阶段工作流（ZCode runtime_mode reminder 的
-    等价实现——我们的历史结构没有 system-reminder 附件，走系统提示词拼接）。
-    """
-    text = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    if plan_enabled:
-        text += (
-
-            "\n\n# 计划模式（已启用）\n\n"
-            "用户要求先做只读探索与方案设计，当前处于计划模式：\n"
-            "1. 只允许只读操作（read_file/glob/todo_write/load_skill/只读命令）；"
-            "禁止写文件、改文件、删除或任何有副作用的操作。\n"
-            "2. 按四阶段推进：①只读探索 → ②设计方案权衡 → ③复查 → "
-            "④用 exit_plan_mode 提交完整计划（markdown）。\n"
-            "3. 计划获批后才会开始实现。"
-        )
-    return text
+def _load_system_prompt() -> str:
+    """每轮现读系统提示词，让文件修改在下一轮立即生效。"""
+    return _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def _sse_frame(event: dict) -> str:
@@ -147,13 +130,8 @@ async def start_turn(
     _check_not_running(session_id)
 
     # 模式随提交生效（ZCode resolveSubmittedExecutionState 语义）：缺省沿用当前
-    if body.mode is not None or body.plan_enabled is not None:
-        current = execution_state.load_execution_state(settings.data_dir)
-        execution_state.save_execution_state(
-            settings.data_dir,
-            body.mode or current["mode"],
-            body.plan_enabled if body.plan_enabled is not None else current["plan_enabled"],
-        )
+    if body.mode:
+        execution_state.save_execution_state(settings.data_dir, body.mode)
     # turn 使用独立 DB 会话：HTTP 请求结束时请求级会话会关闭，
     # 而后台泵任务要一直用到 turn 收口。
     turn_db = db.new_session()
@@ -222,7 +200,7 @@ def _turn_sse_response(
     deps = TurnDeps(
         client=client,
         recorder=recorder,
-        system_prompt=_load_system_prompt(execution_state.load_execution_state(settings.data_dir)["plan_enabled"]),
+        system_prompt=_load_system_prompt(),
         history=history,
         stop_flag=stop_event.is_set,
         approver=InteractiveApprover(turn_db, session_id, recorder, queue),
@@ -308,8 +286,7 @@ def submit_approval(session_id: str, body: ApprovalIn) -> dict:
         info = approvals.get_request(body.request_id)
         if info is None or not info.get("full_access"):
             raise HTTPException(status_code=404, detail="审批请求不存在或不支持完全访问")
-        current = execution_state.load_execution_state(settings.data_dir)
-        execution_state.save_execution_state(settings.data_dir, "yolo", current["plan_enabled"])
+        execution_state.save_execution_state(settings.data_dir, "yolo")
         if not approvals.resolve(body.request_id, True):
             raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
         logger.info("完全访问已授权 session=%s", session_id)
@@ -326,9 +303,7 @@ def submit_approval(session_id: str, body: ApprovalIn) -> dict:
             )
             logger.info("审批规则已保存 tool=%s content=%s", rule["tool"], rule["content"])
 
-    if option_id == "approve":  # 计划审批：批准
-        approved, used_feedback = True, None
-    elif option_id == "allowOnce" or option_id == "allowAlways":
+    if option_id == "allowOnce" or option_id == "allowAlways":
         approved, used_feedback = True, None
     elif option_id == "deny":
         approved, used_feedback = False, feedback

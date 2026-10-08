@@ -5,7 +5,6 @@
 import { ArrowRight, ShieldCheck, Warning } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { submitApproval } from '../api/client'
-import { MarkdownWithCopy } from './MessageItem'
 import type { SessionDetail } from '../types'
 
 export interface ApprovalOption { option_id: string; label: string; content?: string }
@@ -28,7 +27,6 @@ export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModal
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
-  const plan = approval.tool === 'exit_plan_mode' && typeof (approval.input as { plan?: string } | null)?.plan === 'string'
   // ref 在点击时立即上锁，连续数字键或双击也不会重复提交。
   const submittingRef = useRef(false)
   const decide = async (optionId: string) => {
@@ -81,7 +79,7 @@ export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModal
           <div><h2 id="approval-title" className="text-[18px] font-semibold text-zinc-900">需要你的批准</h2><p className="mt-1 text-[12px] text-zinc-600">查看操作后，选择本次执行方式</p></div>
         </div>
         <p id="approval-description" className="text-[13px] leading-6 text-zinc-600">助手请求执行 <span className="font-mono font-medium text-zinc-800">{approval.tool}</span>：{approval.reason}</p>
-        {plan ? <div className="mt-4 max-h-64 overflow-auto rounded-xl border border-zinc-200 p-4"><MarkdownWithCopy text={String((approval.input as { plan?: string }).plan)} /></div> : <pre className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-zinc-200/70 bg-zinc-50 p-4 text-[12px] leading-6 text-zinc-700">{JSON.stringify(approval.input ?? {}, null, 2)}</pre>}
+        <pre className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-zinc-200/70 bg-zinc-50 p-4 text-[12px] leading-6 text-zinc-700">{JSON.stringify(approval.input ?? {}, null, 2)}</pre>
         <div role="group" aria-label="审批选项" className="mt-5 space-y-2">
           {approval.options.map((option, index) => <button key={option.option_id} type="button" disabled={submitting} onClick={() => void decide(option.option_id)} data-permission-option-kind={option.option_id} className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition disabled:opacity-50 ${option.option_id === 'fullAccess' ? 'border-amber-200 bg-amber-50/70 text-amber-900 hover:border-amber-400' : option.option_id === 'allowOnce' ? 'border-accent-200 bg-accent-50/50 text-accent-800 hover:border-accent-600' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
             <span className="font-num flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-current/15 text-[11px]">{index + 1}</span>

@@ -1,16 +1,15 @@
 """权限服务：ZCode PermissionService 的复刻（docs/ARCHITECTURE.md §4.2）。
 
 概念对照：
-- 协作模式 mode：build(变更前确认)/edit(自动编辑)/yolo(完全访问)；planEnabled 是
-  独立标志不是第四种 mode——plan 开启时 yolo 直通失效，写入类一律拒绝（不弹窗）。
+- 协作模式 mode：build(变更前确认)/edit(自动编辑)/yolo(完全访问)。
 - 工具能力 TOOL_SPECS：每工具静态声明（ZCode ToolPermissionSpec 精简版），
   bash 只读命令运行时降级为低风险免批（ZCode resolveBashPermissionCapability 同款）。
 - 规则 PermissionRuleset：{version, allow:[{tool, content?}], deny:[...]}；
   匹配 `cmd:*` 前缀（词边界）/* 通配/精确；subject 从 input 依次取
   command/url/file_path/path/pattern 第一个 string 字段。
 - 评估顺序（deny 恒压 allow，照抄 ZCode checkPermission）：
-  硬拒(deny-list+路径越界) → plan 进出特判 → yolo 直通(plan 失效) → deny 规则
-  → ask 规则 → plan 检查(readOnly allow/其余 DENY) → allow 规则 → edit 检查 → build 检查。
+  硬拒(deny-list+路径越界) → yolo 直通 → deny 规则
+  → ask 规则 → allow 规则 → edit 检查 → build 检查。
 
 安全约束（ZCode 同款）：高危根命令（rm/sudo/del…）不允许生成前缀规则，
 "总是允许"退化为整条命令精确匹配——否则 `rm:*` 会连 `rm -rf /` 一起放行。
@@ -47,7 +46,7 @@ _READONLY_BASH_ROOTS = (
 )
 
 # ---------- 工具能力声明（ZCode ToolPermissionSpec 精简版） ----------
-# permission: 能力组（edit 类在 edit 模式免确认）；readOnly: 计划模式放行依据
+# permission: 能力组（edit 类在 edit 模式免确认）；readOnly: build 模式放行依据
 
 TOOL_SPECS: dict[str, dict] = {
     "bash":        {"permission": "bash",    "riskLevel": "high",   "sideEffectScope": "system",    "needsApproval": True,  "destructive": True,  "readOnly": False},
@@ -60,8 +59,6 @@ TOOL_SPECS: dict[str, dict] = {
     "todo_write":  {"permission": "todo",    "riskLevel": "low",    "sideEffectScope": "session",   "needsApproval": False, "destructive": False, "readOnly": True},
     "load_skill":  {"permission": "read",    "riskLevel": "low",    "sideEffectScope": "none",      "needsApproval": False, "destructive": False, "readOnly": True},
     "subtask":     {"permission": "subagent","riskLevel": "low",    "sideEffectScope": "session",   "needsApproval": False, "destructive": False, "readOnly": True},
-    "enter_plan_mode": {"permission": "plan.enter", "riskLevel": "low", "sideEffectScope": "session",  "needsApproval": False, "destructive": False, "readOnly": True},
-    "exit_plan_mode":  {"permission": "plan.exit",  "riskLevel": "low", "sideEffectScope": "session",  "needsApproval": True,  "destructive": False, "readOnly": True},
 }
 
 _DEFAULT_SPEC = {"permission": "unknown", "riskLevel": "medium", "sideEffectScope": "workspace",
@@ -187,7 +184,7 @@ def _allow(rule_id: str, reason: str) -> dict:
 
 
 def check_permission(
-    mode: str, plan_enabled: bool, rules: dict, tool_name: str, tool_input: dict,
+    mode: str, rules: dict, tool_name: str, tool_input: dict,
 ) -> dict:
     """按 ZCode checkPermission 顺序评估，返回 {decision: allow|deny|ask, rule_id, reason}。"""
     cap = _capability(tool_name, tool_input)
@@ -197,45 +194,31 @@ def check_permission(
     if hard:
         return _deny("hard.deny", hard)
 
-    # 1) plan 进出工具特判（优先于一切规则与模式）
-    if tool_name == "enter_plan_mode":
-        return _allow("tool.plan.enter", "进入计划模式无需确认")
-    if tool_name == "exit_plan_mode":
-        if not plan_enabled:
-            return _deny("tool.plan.exitOnly", "只能在计划模式中使用 ExitPlanMode")
-        return _ask("plan.exit", "计划审批：批准后退出计划模式并开始实现")
-
-    # 2) yolo 直通（planEnabled 时失效）
-    if mode == "yolo" and not plan_enabled:
+    # 1) yolo 直通（仍受前面的硬拒约束）
+    if mode == "yolo":
         return _allow("mode.yolo", "完全访问模式放行")
 
-    # 3) deny 规则
+    # 2) deny 规则
     rule = match_rule(rules, "deny", tool_name, tool_input)
     if rule:
         return _deny("rule.deny", f"命中拒绝规则：{rule.get('content') or rule.get('tool')}")
 
-    # 4) ask 规则
+    # 3) ask 规则
     rule = match_rule(rules, "ask", tool_name, tool_input)
     if rule:
         return _ask("rule.ask", "命中确认规则")
 
-    # 5) plan 检查：只读且非破坏放行，其余一律拒绝（不弹窗）
-    if plan_enabled:
-        if cap["readOnly"] and not cap["destructive"]:
-            return _allow("mode.plan.readOnly", "计划模式放行只读工具")
-        return _deny("mode.plan.nonReadOnly", "计划模式只允许只读、非破坏性工具")
-
-    # 6) allow 规则
+    # 4) allow 规则
     rule = match_rule(rules, "allow", tool_name, tool_input)
     if rule:
         return _allow("rule.allow", f"命中允许规则：{rule.get('content') or rule.get('tool')}")
 
-    # 7) edit 检查：文件编辑类 + workspace 范围免确认，其余落 build
+    # 5) edit 检查：文件编辑类 + workspace 范围免确认，其余落 build
     if mode == "edit":
         if cap["permission"] == "edit" and cap["sideEffectScope"] == "workspace":
             return _allow("mode.edit.fileEdit", "自动编辑模式放行文件编辑工具")
 
-    # 8) build 检查
+    # 6) build 检查
     if cap["readOnly"] and not cap["destructive"] and not cap["needsApproval"]:
         return _allow("mode.build.readOnly", "只读工具放行")
     if cap["riskLevel"] == "critical":
@@ -256,4 +239,4 @@ def evaluate(data_dir, tool_name: str, tool_input: dict) -> dict:
 
     state = execution_state.load_execution_state(data_dir or settings.data_dir)
     rules = execution_state.load_permission_rules(data_dir or settings.data_dir)
-    return check_permission(state["mode"], state["plan_enabled"], rules, tool_name, tool_input)
+    return check_permission(state["mode"], rules, tool_name, tool_input)

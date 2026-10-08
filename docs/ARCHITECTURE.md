@@ -10,19 +10,19 @@
 |---|---|---|
 | 1. Agent Loop | run_turn 异步循环，最多40步；无工具且Stop无注入则结束；工具错误回填，模型错误以failed收口 | [agent/loop.py](../backend/app/agent/loop.py)、[agent/llm.py](../backend/app/agent/llm.py)、[agent/model_call.py](../backend/app/agent/model_call.py) |
 | 2. Tool Use | TOOLS提供schema，TOOL_HANDLERS分发同步工具；todo/subtask另走异步分支 | [agent/tools.py](../backend/app/agent/tools.py)、[agent/loop.py](../backend/app/agent/loop.py) |
-| 3. Permission | evaluate返回allow/deny/ask；build/edit/yolo + 计划开关；硬拒优先，审批决定回填模型 | [agent/permission_service.py](../backend/app/agent/permission_service.py)、[sessions/approvals.py](../backend/app/sessions/approvals.py) |
+| 3. Permission | evaluate返回allow/deny/ask；build/edit/yolo；硬拒优先，审批决定回填模型 | [agent/permission_service.py](../backend/app/agent/permission_service.py)、[sessions/approvals.py](../backend/app/sessions/approvals.py) |
 | 4. Hooks | Pre/Post记录工具日志；Stop可注入续轮；UserPromptSubmit仅预留，权限独立于hook | [agent/hooks.py](../backend/app/agent/hooks.py)、[agent/loop.py](../backend/app/agent/loop.py) |
 | 5. Task System | todo_write整板更新，≤20项、最多1项进行中；保存todo part并发事件；未实现“三轮未更新提醒” | [agent/todo.py](../backend/app/agent/todo.py) |
-| 6. Subagents | 独立历史、最多30步、串行、防递归；当前9个同步工具，权限同父级，结果回填父轮 | [agent/subtask.py](../backend/app/agent/subtask.py) |
+| 6. Subagents | 独立历史、最多30步、串行、防递归；当前7个同步工具，权限同父级，结果回填父轮 | [agent/subtask.py](../backend/app/agent/subtask.py) |
 | 7. Context Compact | turn开始执行microcompact → LLM摘要；阈值与恢复边界见§3 | [agent/compact.py](../backend/app/agent/compact.py) |
 | 8. Skill | load_skill按目录读SKILL.md全文；有目录枚举函数，但尚未注入系统提示词 | [agent/skills.py](../backend/app/agent/skills.py) |
 | 9. Goal Loop | **Web后端未实现**；独立完成度判断器、/goal自动续轮仅在参考脚本中 | [scripts_mini_harness/mini_harness.py](../scripts_mini_harness/mini_harness.py) |
 
-- 工具：bash/read_file/write_file/edit_file/glob/delete_file + todo_write/load_skill/subtask/enter_plan_mode/exit_plan_mode。
-  - 子助手仅同步工具：6个基础工具 + load_skill + 计划进出；不含todo/subtask。
+- 工具：bash/read_file/write_file/edit_file/glob/delete_file + todo_write/load_skill/subtask。
+  - 子助手仅同步工具：6个基础工具 + load_skill；不含todo/subtask。
   - 文件读/写/改/删经safe_path限制于workspace；PowerShell仅固定cwd，无系统沙箱，glob未过同等路径检查。
 - 运行：同会话单turn，跨会话可并行；工具逐个执行；停止在检查点生效，不强杀命令。
-- 状态：mode、plan_enabled、权限规则全项目共享；事件经同一Queue输出SSE，断线不取消后台turn。
+- 状态：mode、权限规则全项目共享；事件经同一Queue输出SSE，断线不取消后台turn。
 - 复用：发送/重跑共用turn装配；主/子共用模型调用记录与审批等待，循环和工具范围独立。
 - README描述参考脚本；上述未接通项为当前源码状态，完整待核对清单见[交接文档](session-handoff.md)。
 
@@ -75,8 +75,7 @@
 | backend/data/下 | 用途 |
 |---|---|
 | workspace/、workspace/.rubbish/ | 工具工作区、delete_file删除文件的可恢复副本 |
-| execution_state.json、permission_rules.json | 共享模式/计划标志、allow/deny规则 |
-| plans/ | 已批准的计划Markdown |
+| execution_state.json、permission_rules.json | 共享模式、allow/deny规则 |
 | logs/app.log | 工程事件；纪律见RELIABILITY |
 
 ## 3. 上下文压缩

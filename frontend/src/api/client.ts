@@ -78,10 +78,9 @@ export function submitApproval(
   })
 }
 
-/** 执行状态（协作模式 + 计划标志）：模式切换器的初值与回显来源 */
+/** 执行状态（协作模式）：模式切换器的初值与回显来源 */
 export interface PermissionState {
   mode: string // build | edit | yolo
-  plan_enabled: boolean
 }
 
 export function getPermissionState(): Promise<PermissionState> {
@@ -91,7 +90,6 @@ export function getPermissionState(): Promise<PermissionState> {
 /** 随提交生效的执行状态草稿（模式与模型一样属于下一次发送） */
 export interface ExecutionDraft {
   mode?: string
-  plan_enabled?: boolean
 }
 
 // ---------- SSE 流式 ----------

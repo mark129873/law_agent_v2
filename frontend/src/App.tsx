@@ -216,8 +216,8 @@ function SessionView({
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   // 右栏 subtask 面板：点击卡片打开（持有同一 work item 引用，流式更新可见）
   const [activeSubtask, setActiveSubtask] = useState<SubtaskItem | null>(null)
-  // 执行状态（模式/计划标志）：初值来自服务端，turn 收口后刷新（完全访问/计划工具会改它）
-  const [permission, setPermission] = useState<PermissionState>({ mode: 'build', plan_enabled: false })
+  // 执行状态（模式）：初值来自服务端，turn 收口后刷新（完全访问审批会改它）
+  const [permission, setPermission] = useState<PermissionState>({ mode: 'build' })
 
   const refreshPermission = useCallback(() => {
     getPermissionState().then(setPermission).catch(() => {})

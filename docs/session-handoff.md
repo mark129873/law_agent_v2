@@ -1,23 +1,20 @@
 # 会话交接
 
-## 本轮（2026-10-08，Session 008）
+## 本轮（2026-10-08，Session 009）
 
-| 项 | 结果 |
-|---|---|
-| 目标 | 商业产品质感的暖黄助手工作台；用户最终要求取消绿色 |
-| 范围 | 欢迎/导航/输入/工作卡/子面板/审批/Markdown；React状态职责、路由和后端契约保持 |
-| 视觉 | 白色、微暖灰、石墨文字、暖金黄；系统字体、统一间距/圆角/焦点；窄窗口面板覆盖 |
-| 交互 | 去除嵌套按钮；审批焦点循环、数字反馈防误触、防重复提交；请求失败可见 |
-| 验证 | build通过，主包366.14kB；lint 0错误/5条既有警告；audit 0漏洞；内存API/假SSE浏览器与截图验收通过 |
-| 数据 | 未连接真实后端/数据库/模型，真实data/workspace/log未改；未复跑真实服务E2E |
-| 证据 | tmp/ui-redesign/；暖黄最终图welcome-warm.jpg、chat-warm.jpg；完整验证见progress Session 008 |
-| 功能清单 | 20项passing、1项deprecated及历史证据保留；frontend_review记录UI验收 |
-| 后端简化 | Session 007已提交cc5874d；共用turn装配/查询/模型记录/审批工时，生产代码净减84行；隔离空库+假LLM全量87 passed |
+- 分支：远端原仅main e4bc99e；从origin/main建dot，按用户要求提交并推送dot，main保持。
+- 已实现：Plan独立UI、请求/状态字段、工具、提示注入、审批特判与归档已删除；保留todo、普通三模式/审批、子助手和聊天历史。
+- 验证：假LLM专项12过；全量91过/3既有失败（同环境基线84过/同3失败）；前端build通过361.83kB，lint原有5警告。
+- 启动：标准uvicorn 127.0.0.1:8100实测health=ok、空会话列表、mode=build后正常停止。
+- 未验：云浏览器首次权限检查dismiss、重试ERR_BLOCKED_BY_CLIENT，原因未确认。没有完成UI实测或截图；BE-014及本轮复核标blocked。
+- 既有测试限制：无powershell使echo/批准后Remove-Item失败；Linux将C:/路径视为相对目录，Windows盘符越界断言失败。未扩修、未弱化测试。
+- 数据：开始时没有backend/data或log，无旧历史/计划可清理；没有历史兼容/迁移代码；测试全程无真实付费模型调用。
+- 证据：progress Session 009；临时测试日志在tmp/plan-removal/，不提交。
 
 ## 历史验证
 
 - 真实服务权限E2E为Session 005历史证据；后端pytest为Session 007，前端构建/模拟交互为Session 008。
-- 已有能力：会话/回放、工具、审批/计划、子助手/任务板/技能、压缩、重新生成、日志/用量。
+- 已有能力：会话/回放、工具、普通审批、子助手/任务板/技能、压缩、重新生成、日志/用量。
 - 原始证据见 feature_list.json 与 progress.md Session 005。
 
 ## 未解决项
@@ -33,11 +30,11 @@
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
 | 规则/路径 | ask桶未加载；PowerShell无系统沙箱，glob未过safe_path | execution_state.py、permission_service.py、tools.py |
 
-既有限制：长会话全量回放；5条非阻断前端lint警告。本轮无blocker。
+既有限制：长会话全量回放；5条非阻断前端lint警告。本轮新增验收blocker见上文。
 
 ## 下一步
 
-1. 已完成后端简化与暖黄前端重构；下一轮先核对上述Harness缺口。
+1. 在允许访问的云浏览器补模式切换/普通审批验收；在Windows复测3项既有失败。
 2. 分项修复、补必要验证；既有passing不覆盖本轮发现的缺口。
 3. 保留契约：
    - 四表、稳定sequence、单Queue、审批工时、regenerate用量重算。
