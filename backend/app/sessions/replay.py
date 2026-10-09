@@ -6,7 +6,7 @@
   compact 边界裁剪）。
 
 归属规则（ZCode 同款思想的落地）：
-- message/part 行都带 turn_id 标签，turn 只是行的标签不是容器；
+- message 元信息带 metadata.turnId 标签，part 通过 message_id 归属，turn 只是行的标签不是容器；
 - 每轮"最后一条 text part"提升为 final_text（工作块外的最终回复），
   其余过程条目全部留在工作块内；
 - 没有 turn 收口事实的轮次：在 running_turn_ids 里视为 running，
@@ -17,17 +17,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.config import settings
-from app.models import Message, Part, Session, now_ms
+from app.models import Message, Part, Session
 from app.sessions.approvals import build_options
-from app.sessions.store import _load, entry_data, list_entries
+from app.sessions.store import _load, entry_data, list_entries, message_role, turn_id as message_turn_id, part_kind, part_data, session_info
 
 
-def _msg_data(row: Message) -> dict:
-    return _load(row.data)
+def _message_text(parts: list[Part]) -> str:
+    """用户和助手使用相同正文来源；多 text part 按 sequence 拼接。"""
+    return "".join(_load(p.data).get("text", "") for p in parts if part_kind(p) == "text")
 
 
 def _part_data(row: Part) -> dict:
-    return _load(row.data)
+    return part_data(row)
 
 
 def _load_messages_and_parts(db: DbSession, session_id: str) -> tuple[list[Message], dict[str, list[Part]]]:
@@ -63,7 +64,7 @@ def load_replay(
     running_turn_ids = running_turn_ids or set()
 
     session_row = db.get(Session, session_id)
-    if session_row is None or session_row.deleted_at is not None:
+    if session_row is None or session_row.time_archived is not None:
         return None
 
     # --- 事实行 ---
@@ -73,8 +74,8 @@ def load_replay(
     context_used = 0  # 最近一轮"最后一步 input"≈当前上下文占用（进度条口径）
     for entry in list_entries(db, session_id):
         data = entry_data(entry)
-        # turn_id 优先取列（新数据），回退 data JSON（兼容）
-        turn_label = entry.turn_id or data.get("turn_id", "")
+        # 轮次来自 JSON 元信息，由存储适配器投影为回放标签
+        turn_label = data.get("turn_id", "")
         if entry.type == "turn":
             turn_facts[data.get("turn_id", "")] = data
             context_used = int(data.get("context_tokens", 0) or 0)  # 时间升序，后者覆盖
@@ -90,7 +91,7 @@ def load_replay(
     turns: dict[str, dict] = {}
     turn_order: list[str] = []
     for msg in messages:
-        turn_id = msg.turn_id
+        turn_id = message_turn_id(msg)
         if turn_id not in turns:
             fact = turn_facts.get(turn_id, {})
             turns[turn_id] = {
@@ -111,10 +112,10 @@ def load_replay(
             turn_order.append(turn_id)
 
         bucket = turns[turn_id]
-        if msg.role == "user" and bucket["user_message"] is None:
+        if message_role(msg) == "user" and bucket["user_message"] is None:
             bucket["user_message"] = {
                 "id": msg.id,
-                "text": _msg_data(msg).get("text", ""),
+                "text": _message_text(parts_by_message.get(msg.id, [])),
                 "time": msg.time_created,
             }
             continue  # 用户消息不入工作块
@@ -123,13 +124,13 @@ def load_replay(
         for part in parts_by_message.get(msg.id, []):
             data = _part_data(part)
             item_time = part.time_created
-            if part.kind == "text":
+            if part_kind(part) == "text":
                 bucket["_text_parts"].append(data.get("text", ""))
                 bucket["_last_text_id"] = part.id
                 bucket["work_items"].append(
                     {"kind": "text", "id": part.id, "text": data.get("text", ""), "time": item_time}
                 )
-            elif part.kind == "tool_call":
+            elif part_kind(part) == "tool_call":
                 bucket["work_items"].append(
                     {
                         "kind": "tool_call",
@@ -141,7 +142,7 @@ def load_replay(
                         "time": item_time,
                     }
                 )
-            elif part.kind == "subtask":
+            elif part_kind(part) == "subtask":
                 bucket["work_items"].append(
                     {
                         "kind": "subtask",
@@ -152,11 +153,11 @@ def load_replay(
                         "time": item_time,
                     }
                 )
-            elif part.kind == "todo":
+            elif part_kind(part) == "todo":
                 bucket["work_items"].append(
                     {"kind": "todo", "id": part.id, "items": data.get("items", []), "time": item_time}
                 )
-            elif part.kind == "error":
+            elif part_kind(part) == "error":
                 bucket["work_items"].append(
                     {"kind": "error", "id": part.id, "message": data.get("message", ""), "time": item_time}
                 )
@@ -223,13 +224,7 @@ def load_replay(
 
     return {
         "session": {
-            "id": session_row.id,
-            "title": session_row.title,
-            "model": session_row.model,
-            "created_at": session_row.created_at,
-            "updated_at": session_row.updated_at,
-            "tokens_used": session_row.tokens_used,
-            "input_tokens": session_row.input_tokens,
+            **session_info(db, session_row),
             "context_used": context_used,
             "context_window": settings.context_window,
         },
@@ -278,9 +273,9 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
     for msg in messages:
         if msg.sequence <= cutoff_seq:
             continue
-        if msg.role == "user":
+        if message_role(msg) == "user":
             flush_tool_results()
-            text = _msg_data(msg).get("text", "")
+            text = _message_text(parts_by_message.get(msg.id, []))
             result.append({"role": "user", "content": text})
             continue
 
@@ -290,9 +285,9 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
         content: list[dict] = []
         for part in parts_by_message.get(msg.id, []):
             data = _part_data(part)
-            if part.kind == "text" and data.get("text"):
+            if part_kind(part) == "text" and data.get("text"):
                 content.append({"type": "text", "text": data["text"]})
-            elif part.kind == "tool_call":
+            elif part_kind(part) == "tool_call":
                 content.append(
                     {
                         "type": "tool_use",
@@ -313,24 +308,3 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
 
     flush_tool_results()
     return result
-
-
-def recalc_session_usage(db: DbSession, session_id: str) -> None:
-    """从 turn 事实重算会话 token 用量（重新生成回滚后修正用）。
-
-    修一个历史潜伏 bug：旧实现 recalc_tokens_used 是孤儿函数从未被接线，
-    导致 regenerate 删除旧轮事实后 session.tokens_used 仍保留被删轮的累计。
-    现在同时重算输出/输入两列并落库。
-    """
-    output_total = 0
-    input_total = 0
-    for entry in list_entries(db, session_id, "turn"):
-        data = entry_data(entry)
-        output_total += int(data.get("tokens_used", 0))
-        input_total += int(data.get("input_tokens", 0))
-    row = db.get(Session, session_id)
-    if row is not None:
-        row.tokens_used = output_total
-        row.input_tokens = input_total
-        row.updated_at = now_ms()
-        db.commit()

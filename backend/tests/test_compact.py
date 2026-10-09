@@ -80,7 +80,7 @@ def test_needs_compact_decision() -> None:
 def test_microcompact_keeps_recent(store_db) -> None:
     """占位改写：只清最旧的，保留最近 keep 条完整。"""
     store.ensure_session(store_db, "s1", "test-model", "压缩测试")
-    store.upsert_message(store_db, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.upsert_message(store_db, "s1", "a1", "assistant", {}, "t1")
     # 造 4 条已完成的工具输出，间隔 1ms 保证时间序
     for i in range(4):
         store.upsert_part(
@@ -96,7 +96,7 @@ def test_microcompact_keeps_recent(store_db) -> None:
     outputs = []
     for i in range(4):
         part = store_db.get(__import__("app.models", fromlist=["Part"]).Part, f"p{i}")
-        outputs.append(json.loads(part.data)["output"])
+        outputs.append(json.loads(part.data)["state"]["output"])
     assert outputs[0].startswith("[旧工具结果已清除")
     assert outputs[1].startswith("[旧工具结果已清除")
     assert outputs[2] == "输出2" and outputs[3] == "输出3"
@@ -111,8 +111,8 @@ def test_microcompact_keeps_recent(store_db) -> None:
 def _seed_long_history(store_db) -> None:
     """两轮历史 + 巨大正文（估算超预算）。"""
     store.ensure_session(store_db, "s1", "test-model", "第二轮问题")
-    store.upsert_message(store_db, "s1", "u1", "user", {"text": "x" * 3000}, "t0")
-    store.upsert_message(store_db, "s1", "a1", "assistant", {"text": ""}, "t0")
+    store.save_user_message(store_db, "s1", "u1", "x" * 3000, "t0")
+    store.upsert_message(store_db, "s1", "a1", "assistant", {}, "t0")
     store.upsert_part(store_db, "s1", "a1", "pa", "text", {"text": "y" * 3000}, "t0")
 
 
@@ -120,7 +120,7 @@ def test_summarize_and_boundary(store_db) -> None:
     """compact：写 compaction 事实；load_history 只发边界之后 + 摘要置顶。"""
     _seed_long_history(store_db)
     # 当前轮用户消息（compact 后必须保留在边界之后）
-    user_row = store.upsert_message(store_db, "s1", "u2", "user", {"text": "第二轮问题"}, "t1")
+    user_row = store.save_user_message(store_db, "s1", "u2", "第二轮问题", "t1")
 
     history = replay.load_history(store_db, "s1")
     history.append({"role": "user", "content": "第二轮问题"})
@@ -189,7 +189,7 @@ def test_compact_skipped_when_within_budget(store_db) -> None:
 def test_compact_circuit_breaker(store_db) -> None:
     """熔断：连续失败 3 次后跳过摘要（不再调用客户端）。"""
     _seed_long_history(store_db)
-    store.upsert_message(store_db, "s1", "u2", "user", {"text": "第二轮问题"}, "t1")
+    store.save_user_message(store_db, "s1", "u2", "第二轮问题", "t1")
     compact.reset_failure_count("s1")
 
     boom = BoomSummaryClient()

@@ -56,7 +56,7 @@ def init_db(data_dir: Path) -> Engine:
     event.listen(engine, "connect", _enable_sqlite_pragmas)
 
     # 建表（幂等：已存在的表跳过）。表结构由 models.py 声明；
-    # 结构演进约定（产品决策 2026-09-28）：不做迁移，删除 data/ 重启即全新建表。
+    # 结构演进约定（产品决策 2026-09-28）：不做迁移，停服务并清理数据库文件后重启建表（保留其他数据）。
     Base.metadata.create_all(engine)
 
     _engine = engine

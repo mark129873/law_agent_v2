@@ -1,125 +1,83 @@
-"""实体表定义：ZCode session-store 同款的四表结构。
+"""ZCode 式最小四表：关系/顺序在列中，消息与部件内容在 JSON 中。
 
-设计要点（docs/ARCHITECTURE.md §3）：
-- SQLite 单库是会话内容的唯一事实源，所有可变结构数据放 data JSON 列；
-- sequence 决定时间线顺序：首次取 max+1，之后永不改动（冲突时原样保留），
-  这是 ZCode 防止"二次保存导致时间线漂移"的关键规则；
-- 时间戳统一用 epoch 毫秒浮点数（time.time() * 1000），JSON 序列化直接可用；
-- 软删除：session.deleted_at 非空即视为已删（用户视角是永久删除，无归档）。
+正文仅存 text part；轮次是 metadata.turnId 标签，不是额外容器或列。
+不迁移旧库；结构变更后从空库启动。
 """
 
 import time
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-def now_ms() -> float:
-    """当前 epoch 毫秒（全部时间戳的统一来源）。"""
-    return time.time() * 1000.0
+def now_ms() -> int:
+    """统一使用 epoch 毫秒，供 API 与 SQLite 共用。"""
+    return int(time.time() * 1000)
 
 
 def new_id() -> str:
-    """生成 32 位随机 id（uuid4 hex，无连字符）。"""
+    """生成实体 ID，更新实体时复用原 ID。"""
     return uuid.uuid4().hex
 
 
 class Base(DeclarativeBase):
-    """全部 ORM 模型的公共基类。"""
+    """ORM 公共基类。"""
 
 
 class Session(Base):
-    """会话表：一行一个会话。
+    """会话身份；time_archived 承载已有软删行为，不增加归档功能。
 
-    title 由首条用户消息截断 30 字生成，不可重命名（产品决策）。
-    tokens_used 是输出 token 累计、input_tokens 是输入 token 累计：
-    turn 收口时累加，regenerate 回滚后由 turn 事实重算修正。
+    模型选择和用量由会话记录投影，避免两份累计值在重跑后漂移。
     """
-
     __tablename__ = "session"
-
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     title: Mapped[str] = mapped_column(String(120), default="")
-    model: Mapped[str] = mapped_column(String(120), default="")
-    created_at: Mapped[float] = mapped_column(Float, default=now_ms)
-    updated_at: Mapped[float] = mapped_column(Float, default=now_ms)
-    # 软删除标记：非空 = 已删。列表/回放一律过滤。
-    deleted_at: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
-    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    time_created: Mapped[int] = mapped_column(Integer, default=now_ms)
+    time_updated: Mapped[int] = mapped_column(Integer, default=now_ms)
+    time_archived: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class Message(Base):
-    """消息表：一行一条用户/助手消息。
+    """一次用户输入或模型响应的元信息；正文不进入 data。
 
-    data JSON 结构：{"text": "..."}（v1 消息正文就是文本）。
-    assistant 消息在"每个模型步开始"时建行（ZCode 里程碑语义），
-    正文随后通过更新 data 填充。
+    data: role、modelId、parentID（助手）、metadata.turnId。
     """
-
     __tablename__ = "message"
-
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True
-    )
+    session_id: Mapped[str] = mapped_column(String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True)
     sequence: Mapped[int] = mapped_column(Integer, index=True)
-    # turn 标签（ZCode 设计：turn 是行上的标签不是容器），回放按它分组
-    turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
-    role: Mapped[str] = mapped_column(String(20))  # user | assistant
+    time_created: Mapped[int] = mapped_column(Integer, default=now_ms)
+    time_updated: Mapped[int] = mapped_column(Integer, default=now_ms)
     data: Mapped[str] = mapped_column(String, default="{}")
-    time_created: Mapped[float] = mapped_column(Float, default=now_ms)
-    time_updated: Mapped[float] = mapped_column(Float, default=now_ms)
 
 
 class Part(Base):
-    """消息部件表：挂在 message 下的可变子项。
+    """消息内容；data.type 区分 text/tool/subtask/todo/error。
 
-    kind 与 data JSON 约定：
-    - text:      {"text": "..."}                        assistant 正文（整段写入）
-    - tool_call: {"name","input","status","output",...} 工具调用，按生命周期逐态 upsert
-    - subtask:   {"goal","status","output",...}         子助手调用
-    - todo:      {"items":[...]}                        任务板快照
+    工具使用 callID、tool、state；todo/error 为本项目必需扩展。
+    轮次由 message 取得，不在每个 part 重复保存。
     """
-
     __tablename__ = "part"
-
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    message_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("message.id", ondelete="CASCADE"), index=True
-    )
-    session_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True
-    )
+    message_id: Mapped[str] = mapped_column(String(32), ForeignKey("message.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str] = mapped_column(String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True)
     sequence: Mapped[int] = mapped_column(Integer, index=True)
-    # turn 标签（同 message），回放按它归组
-    turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
-    kind: Mapped[str] = mapped_column(String(20))
+    time_created: Mapped[int] = mapped_column(Integer, default=now_ms)
+    time_updated: Mapped[int] = mapped_column(Integer, default=now_ms)
     data: Mapped[str] = mapped_column(String, default="{}")
-    time_created: Mapped[float] = mapped_column(Float, default=now_ms)
-    time_updated: Mapped[float] = mapped_column(Float, default=now_ms)
 
 
 class SessionEntry(Base):
-    """会话事实表：不挂在具体消息上的会话级事实。
+    """会话级状态或审计记录；支持按 ID 更新，审计调用仍可追加。
 
-    type 与 data JSON 约定（docs/ARCHITECTURE.md §3.4）：
-    - turn:       {"turn_id","started_at","ended_at","active_ms","state"}  工作块数据源
-    - approval:   {"request_id","tool","approved","time"}                  审批留痕
-    - compaction: {"summary_message_id","tokens_before","tokens_after"}     压缩事实
-    - context:    {"model","max_tokens","time"}                            每 turn 上下文快照
-
-    turn_id 列：事实所属轮次的标签（重新生成回滚时按它删除该轮事实）。
+    type 保留当前 turn/approval/compaction/context；data.metadata.turnId
+    标识所属轮次，用于回放和重跑清理。
     """
-
     __tablename__ = "session_entry"
-
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True
-    )
-    type: Mapped[str] = mapped_column(String(20), index=True)
-    turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    session_id: Mapped[str] = mapped_column(String(32), ForeignKey("session.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String(80), index=True)
+    time_created: Mapped[int] = mapped_column(Integer, default=now_ms)
+    time_updated: Mapped[int] = mapped_column(Integer, default=now_ms)
     data: Mapped[str] = mapped_column(String, default="{}")
-    time_created: Mapped[float] = mapped_column(Float, default=now_ms)

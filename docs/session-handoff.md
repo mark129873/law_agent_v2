@@ -1,14 +1,12 @@
 # 会话交接
 
-## 本轮（2026-10-09，Session 011）
+## 本轮（2026-10-09，Session 012）
 
-- 分支：已将dot快进合并并推送main（6d8b8b6）；本轮清理在main提交并按用户要求推送。
-- 已实现：删除未使用的实时token状态、接口/setter导出、JSON replacer及后端辅助代码；技能handler直接注册；删除根目录重复Python配置、Vite模板/素材，校准README与启动导航。
-- 参考实现：按用户要求保留mini_harness.py及技能，删除参考测试和pytest开发依赖；CLI仍有独立pyproject/uv.lock，运行依赖未升级。
-- 验证：标准后端pytest 91过/3既有平台失败；前端build通过361.65kB，lint无错误/3既有警告（原5）；CLI锁文件安装与启动输入q退出通过，无模型调用。
-- 边界：本轮仅清理，无用户可见UI/交互改动，未重复浏览器E2E；未改schema、后端测试断言或权限行为，既有blocked功能保持。
-- 数据：backend/data及log元数据快照未变，pytest .tmp-data无残留；没有启动本轮常驻服务，临时记录/依赖/构建产物不入库。
-- 证据：progress Session 011与feature_list.json的cleanup_review。
+- 基准：main 84da92c；参考 .github_ZCode 29628c9。
+- 已实现：最小四表结构、用户/助手统一 text part、消息角色与轮次 JSON 元信息、tool state、session_entry upsert；保持 API/SSE 契约；同步压缩/回放/重跑/用量。修复运行态回放 ID 错配。
+- 验证：新10例过；专项61过；全量101过/3既有平台失败；前端 build/type通过，lint 3既有警告。云浏览器真实前后端、假模型测试通过，详见 storage-alignment.md。
+- 数据：此前无实际旧库，已建空四表；测试沙箱清理、服务全部停止；不迁移，不清其他工作区文件。
+- 交付：用户要求 ZIP 先发，再经 GitHub 插件将 dot 快进基于最新 main 并提交；不得把计划写成已发布。
 
 ## 历史验证
 
@@ -24,7 +22,7 @@
 | 优先核对 | 问题 | 位置 |
 |---|---|---|
 | 审批停止 | 等待不监听stop；弹窗无停止按钮 | approvals.py、turn_manager.py、ApprovalModal.tsx |
-| 运行态回放 | 路由传session id，回放按turn id判断 | api/sessions.py、replay.py |
+
 | 审批恢复 | 子助手fullAccess限制未持久化；重启可能弹出失效请求 | approvals.py、replay.py |
 | 工具呈现 | tool_started在执行结束后才发；自动放行无审批事实 | loop.py |
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
@@ -52,3 +50,5 @@
 | frontend/ | npm run build |
 
 调试：backend/data/logs/app.log；`log/model-io-<session_id>.jsonl`。启动/测试环境见 init.md、RELIABILITY.md。
+
+本轮修复：运行中刷新回放使用 running_turn_ids；其余历史问题未在本轮扩修。

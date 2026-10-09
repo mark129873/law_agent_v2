@@ -57,8 +57,8 @@ class TurnRecorder:
         """
         if persist_user:
             store.ensure_session(self.db, self.session_id, self.model, user_text)
-            user_row = store.upsert_message(
-                self.db, self.session_id, new_id(), "user", {"text": user_text}, self.turn_id
+            user_row = store.save_user_message(
+                self.db, self.session_id, new_id(), user_text, self.turn_id, self.model
             )
             self.first_user_sequence = user_row.sequence
         else:
@@ -86,7 +86,7 @@ class TurnRecorder:
             self._pause_started = None
 
     def end_turn(self, state: str) -> dict:
-        """turn 收口：写 turn 事实（工作块数据源），累计 token 到会话。
+        """turn 收口：写 turn 事实（工作块与会话用量的共同数据源）。
 
         tokens_used=输出累计、input_tokens=输入累计、context_tokens=最近一步
         input（≈当前上下文占用，进度条口径），均由 usage 事件驱动。
@@ -107,23 +107,16 @@ class TurnRecorder:
             "cache_creation_tokens": self.cache_creation_tokens,
         }
         store.put_entry(self.db, self.session_id, "turn", fact, turn_id=self.turn_id)
-        # 会话累计 token：直接累加（重新生成时会由 recalc 重算修正）
-        from app.models import Session
-
-        row = self.db.get(Session, self.session_id)
-        if row is not None:
-            row.tokens_used += self.tokens_used
-            row.input_tokens += self.tokens_input
-            row.updated_at = now_ms()
-            self.db.commit()
         return fact
 
     # ---------- 消息与部件 ----------
 
     def step_message(self) -> str:
         """assistant 模型步开始：建 message 行（里程碑语义，ZCode 同款）。"""
+        parent = store.find_last_user_message(self.db, self.session_id)
         row = store.upsert_message(
-            self.db, self.session_id, new_id(), "assistant", {"text": ""}, self.turn_id
+            self.db, self.session_id, new_id(), "assistant",
+            {"modelId": self.model, "parentID": parent.id if parent else None}, self.turn_id
         )
         return row.id
 

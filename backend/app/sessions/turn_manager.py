@@ -46,3 +46,8 @@ def is_running(session_id: str) -> bool:
 def running_session_ids() -> set[str]:
     """全部进行中的会话集合（回放层判断孤儿轮用）。"""
     return set(_active.keys())
+
+
+def running_turn_ids() -> set[str]:
+    """回放按轮次判断运行态，不能传会话键集合。"""
+    return set(_active.values())

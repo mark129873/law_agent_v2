@@ -40,11 +40,23 @@ def tmp_data_dir() -> Path:
 
 
 @pytest.fixture()
-def client(tmp_data_dir: Path) -> TestClient:
+def client(tmp_data_dir: Path, monkeypatch) -> TestClient:
     """带初始化完成的 TestClient：lifespan 会用 DATA_DIR 建库。"""
     from app.main import create_app
 
+    from app.api.sessions import get_llm_client
+    from app.config import settings
+
+    # 测试不依赖开发者的 .env，也绝不构造可联网的真实模型客户端。
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-only-not-a-secret")
+    monkeypatch.setattr(settings, "model_id", "test-model")
+    class UnusedClient:
+        async def stream(self, **kwargs):
+            raise AssertionError("此测试必须显式提供模型脚本")
+            yield  # 保持异步生成器接口
+
     app = create_app()
+    app.dependency_overrides[get_llm_client] = lambda: UnusedClient()
     with TestClient(app) as c:
         yield c
 
