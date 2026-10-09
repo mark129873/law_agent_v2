@@ -79,13 +79,7 @@ def list_sessions(db_session: DbSession = Depends(db.get_db)) -> list[dict]:
     for row in store.list_sessions(db_session):
         items.append(
             {
-                "id": row.id,
-                "title": row.title,
-                "model": row.model,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-                "tokens_used": row.tokens_used,
-                "input_tokens": row.input_tokens,
+                **store.session_info(db_session, row),
                 "running": turn_manager.is_running(row.id),
             }
         )
@@ -99,7 +93,7 @@ def get_session_detail(session_id: str, db_session: DbSession = Depends(db.get_d
     这就是 resume 的读取路径——打开旧会话即拿到全部历史。
     """
     result = replay.load_replay(
-        db_session, session_id, running_turn_ids=turn_manager.running_session_ids()
+        db_session, session_id, running_turn_ids=turn_manager.running_turn_ids()
     )
     if result is None:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -163,11 +157,9 @@ async def regenerate_turn(
     stop_event = turn_manager.register(session_id, recorder.turn_id)
 
     # 回滚：删该轮 assistant 行（级联 parts）与该轮事实；用户消息保留并改挂新轮
-    store.rollback_turn(turn_db, session_id, last_user.turn_id, last_user.sequence)
-    # 重算会话用量：被删轮的累计不再计入（旧实现漏了这步，被删轮 token 会双算）
-    replay.recalc_session_usage(turn_db, session_id)
-    last_user.turn_id = recorder.turn_id
-    turn_db.commit()
+    store.rollback_turn(turn_db, session_id, store.turn_id(last_user), last_user.sequence)
+    # 用量直接来自保留下来的 turn 事实，无需修补累计列。
+    store.retag_message(turn_db, last_user, recorder.turn_id)
 
     history = replay.load_history(turn_db, session_id)  # 以保留的用户消息结尾
 

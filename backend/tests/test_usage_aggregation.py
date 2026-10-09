@@ -1,5 +1,5 @@
 """用量聚合验证（docs/ARCHITECTURE.md §3.7）：
-turn 事实三级 token 字段 + 会话双列累计 + compact 真实预算激活 + regenerate 重算修正。
+turn 事实三级 token 字段 + 会话用量投影 + compact 真实预算激活 + regenerate 重算修正。
 """
 
 import asyncio
@@ -38,7 +38,7 @@ class FakeClient:
 
 
 def test_turn_usage_fact_and_session_columns(recorder) -> None:
-    """跑一轮：turn 事实带输入/上下文占用，会话双列累加，compact 预算喂到真实 input。"""
+    """跑一轮：turn 事实带输入/上下文占用，会话事实聚合，compact 预算喂到真实 input。"""
     from app.agent.loop import TurnDeps
 
     deps = TurnDeps(
@@ -57,10 +57,10 @@ def test_turn_usage_fact_and_session_columns(recorder) -> None:
     assert fact["context_tokens"] == 9
     assert fact["cache_read_tokens"] == 7
     assert fact["cache_creation_tokens"] == 2
-    # 会话双列
-    row = recorder.db.get(Session, "s1")
-    assert row.tokens_used == 3
-    assert row.input_tokens == 9
+    # 会话用量投影
+    row = store.session_info(recorder.db, recorder.db.get(Session, "s1"))
+    assert row["tokens_used"] == 3
+    assert row["input_tokens"] == 9
 
 
 async def _collect(deps) -> list[dict]:
@@ -70,22 +70,20 @@ async def _collect(deps) -> list[dict]:
 def test_recalc_session_usage_after_rollback(recorder) -> None:
     """regenerate 回滚后重算：被删轮的 token 不再计入（旧实现漏接线导致双算）。"""
     store.ensure_session(recorder.db, "s1", model="test-model", first_user_text="t")
-    # 两轮事实：turn1(3/9)、turn2(4/20)；会话列是累加后的 7/29
+    # 两轮事实：turn1(3/9)、turn2(4/20)；会话投影为 7/29
     store.put_entry(recorder.db, "s1", "turn",
                     {"turn_id": "t1", "tokens_used": 3, "input_tokens": 9, "context_tokens": 9},
                     turn_id="t1")
     store.put_entry(recorder.db, "s1", "turn",
                     {"turn_id": "t2", "tokens_used": 4, "input_tokens": 20, "context_tokens": 20},
                     turn_id="t2")
-    row = recorder.db.get(Session, "s1")
-    row.tokens_used = 7
-    row.input_tokens = 29
-    recorder.db.commit()
+    row = store.session_info(recorder.db, recorder.db.get(Session, "s1"))
+    assert row["tokens_used"] == 7
+    assert row["input_tokens"] == 29
 
     # 模拟 regenerate：回滚 turn2 的全部事实，然后重算
     store.rollback_turn(recorder.db, "s1", "t2", from_sequence=10 ** 9)
-    replay.recalc_session_usage(recorder.db, "s1")
 
-    row = recorder.db.get(Session, "s1")
-    assert row.tokens_used == 3  # 只剩 turn1 的输出
-    assert row.input_tokens == 9  # 只剩 turn1 的输入
+    row = store.session_info(recorder.db, recorder.db.get(Session, "s1"))
+    assert row["tokens_used"] == 3  # 只剩 turn1 的输出
+    assert row["input_tokens"] == 9  # 只剩 turn1 的输入

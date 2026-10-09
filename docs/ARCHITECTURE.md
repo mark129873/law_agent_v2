@@ -32,24 +32,21 @@
 
 位置：backend/data/app.db；SQLAlchemy + SQLite/WAL。实现：sessions/store.py、recorder.py、replay.py。
 
-| 表 | 保存内容 |
+| 表 | 最小结构与职责 |
 |---|---|
-| session | 标题、模型、时间、软删标记、输入/输出token累计 |
-| message | 用户/助手消息；turn_id分轮，sequence排序 |
-| part | 正文、工具参数/状态/结果、子助手、任务板、错误 |
-| session_entry | turn工时/用量、approval请求/决定、compaction摘要/边界、context模型快照 |
+| session | id、title、time_created/time_updated/time_archived；归档时间作现有软删标记，不新增归档界面 |
+| message | id、session_id、sequence、time_created/time_updated、data；data 仅元信息（role、modelId、parentID、metadata.turnId） |
+| part | id、message_id、session_id、sequence、time_created/time_updated、data；data.type 区分正文/工具/子助手/任务板/错误 |
+| session_entry | id、session_id、type、time_created/time_updated、data；支持同 ID 更新，轮次标签放 data.metadata.turnId |
 
-1. **写入**
-   - 首条请求创建会话；用户消息立即保存。
-   - 每模型步开始建assistant行，结束写整段正文；流式delta不逐字落库。
-   - 工具按同一part更新状态；sequence首次分配，更新不变；事实正常只追加。
-   - turn结束保存状态/工时/用量；active_ms排除审批等待，主/子循环用量一起累计。
-2. **读取与重跑**
-   - load_replay：按turn分组，末条正文为最终回复；审批按request_id取最新状态。
-   - load_history：与load_replay共用消息/部件查询；重建模型messages、补齐工具往返、按压缩边界裁剪。
-   - regenerate：保留最后用户消息，删除旧回复/该轮事实后重跑并重算用量；不撤销文件/命令操作。
-
-**不迁移schema**：改models.py表结构 → 删除backend/data/ → 重启建表。
+- 对齐 ZCode 29628c9 的表组织；省略未用字段，不复制其全部功能。用户和助手正文都只存 text part。
+- message 每模型步一行；part.sequence 在消息内递增，更新不改变顺序；跨归属同 ID 写入拒绝。
+- 工具 part 使用 type=tool、callID、tool、state（input/status/output）；todo/error 保留为本项目扩展。
+- session 模型从 context 记录读取，用量从 turn 记录聚合，不再存独立累计列。
+- 用户消息与 text part 同事务保存；regenerate 保留用户 message/part，替换 metadata.turnId，删除旧轮助手与事实。
+- 回放/API/SSE 对外格式保持，存储结构由适配层转换；压缩、审批、工具往返和用量语义保留。
+- session_entry 可 upsert；审批审计仍追加请求/决定两条记录，回放按 request_id 取最新。配置更新可选择不触碰会话活动时间。
+- 不做旧 schema 迁移；停服务后只处理 app.db 及配套 WAL/SHM，保留 workspace、规则和其他文件，重启建空库。
 
 ### 2.2 model-io：模型调用快照
 

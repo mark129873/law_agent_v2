@@ -223,3 +223,14 @@
 - 收尾：cleanup_review单独记录清理验收，不覆盖19项passing、1项deprecated、1项blocked的历史状态；既有Harness和UI验收缺口保留。临时记录、依赖与构建产物不入库。
 - 提交：refactor: 清理无用代码与重复项目入口；按用户要求推送main。
 - 下一步：按需收拢前端发送/重跑生命周期与审批/子助手状态；另行处理既有平台测试和UI验收缺口。
+
+
+### Session 012
+- 日期：2026-10-09
+- 目标：按 ZCode 29628c9 对齐四表组织，仅保留现有功能所需字段；基准 main 84da92c。
+- 实现：message 元信息与统一 text part；tool 的 type/callID/tool/state；轮次 metadata.turnId；session_entry 时间与 upsert；会话用量事实聚合；历史/压缩/审批/重跑适配。修复刷新运行态误用 session ID。
+- 验证：新增存储回归10过，受影响专项61过，全量101过/3既有平台失败；前端 build/type 通过361.65kB，lint 0错误/3既有警告。基线另有7项缺测试配置/误建真实客户端问题，由隔离假客户端夹具修正；不改变生产模型接入。
+- 浏览器：云电脑真实前后端+假模型+隔离SQLite，发送/任务板/刷新/重跑/审批通过与拒绝/刷新恢复审批/停止保留部分正文/错误重试通过；用户5条无重试重复，助手8条，无message正文副本，外键检查空、完整性ok。截图 tmp/storage-ui-smoke.png（不入库）。
+- 数据：原 checkout 无旧 app.db，无删除用户数据；已建立 backend/data/app.db 空四表（每表0行）。测试服务全部停止，tests/.tmp-data 已清理。
+- 边界：PowerShell缺失2项、Windows路径1项既有失败未扩修；不用真实模型。ZCode未用字段/功能不复制；todo/error等现有类型保留，四表之外不扩展。
+- 交付：源码 ZIP 与补丁；随后按授权经 GitHub 插件提交 dot，远端结果另行核对。无终端push、无合并或部署。

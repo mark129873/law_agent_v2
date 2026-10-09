@@ -245,12 +245,12 @@ def test_subtask_tokens_counted(recorder) -> None:
     counts = [e["output_tokens"] for e in events if e["type"] == "token_count"]
     assert counts == [50, 5]
 
-    # 2) 会话双列累计：输出 55（子 50 + 主 5）、输入 120（子 100 + 主 20）；
+    # 2) 会话用量投影：输出 55（子 50 + 主 5）、输入 120（子 100 + 主 20）；
     #    turn 事实再带 context_tokens=20（本轮最后一步的 input）
     assert events[-1]["type"] == "turn_completed"
-    row = deps.recorder.db.get(Session, "s1")
-    assert row.tokens_used == 55
-    assert row.input_tokens == 120
+    row = store.session_info(deps.recorder.db, deps.recorder.db.get(Session, "s1"))
+    assert row["tokens_used"] == 55
+    assert row["input_tokens"] == 120
     fact = store.entry_data(store.list_entries(deps.recorder.db, "s1", "turn")[0])
     assert fact["input_tokens"] == 120
     assert fact["context_tokens"] == 20

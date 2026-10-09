@@ -22,8 +22,8 @@ def test_first_message_persists_session(client) -> None:
 
     with db.new_session() as d:
         store.ensure_session(d, sid, model="test-model", first_user_text="帮我写脚本")
-        store.upsert_message(d, sid, "m1", "user", {"text": "帮我写脚本"}, "t1")
-        store.upsert_message(d, sid, "a1", "assistant", {"text": ""}, "t1")
+        store.save_user_message(d, sid, "m1", "帮我写脚本", "t1")
+        store.upsert_message(d, sid, "a1", "assistant", {}, "t1")
         store.upsert_part(d, sid, "a1", "p1", "text", {"text": "好的"}, "t1")
 
     items = client.get("/api/sessions").json()

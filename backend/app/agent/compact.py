@@ -22,7 +22,7 @@ import asyncio
 import logging
 from typing import AsyncIterator
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models import Part
 from app.sessions import store
@@ -89,7 +89,7 @@ def microcompact_parts(db, session_id: str, keep: int) -> int:
     parts = list(
         db.execute(
             select(Part)
-            .where(Part.session_id == session_id, Part.kind == "tool_call")
+            .where(Part.session_id == session_id, func.json_extract(Part.data, "$.type") == "tool")
             .order_by(Part.time_updated.asc())
         ).scalars()
     )
@@ -98,7 +98,7 @@ def microcompact_parts(db, session_id: str, keep: int) -> int:
     changed = 0
     for part in to_clear:
         data = store._load(part.data)
-        data["output"] = _MICRO_PLACEHOLDER
+        data["state"]["output"] = _MICRO_PLACEHOLDER
         part.data = store._dump(data)
         changed += 1
     if changed:
@@ -107,7 +107,7 @@ def microcompact_parts(db, session_id: str, keep: int) -> int:
 
 
 def _has_output(part: Part) -> bool:
-    data = store._load(part.data)
+    data = store.part_data(part)
     return bool(data.get("output")) and data.get("output") != _MICRO_PLACEHOLDER
 
 

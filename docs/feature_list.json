@@ -52,7 +52,7 @@
     {
       "id": "BE-002",
       "name": "会话存储层",
-      "description": "ZCode 式存储：session/message/part/session_entry 四表，里程碑式实时 upsert(sequence 冲突保留)，turn 事实(active_ms 排除审批等待)，软删标记，全量回放拼装(按 turn 分组)，pytest 单测",
+      "description": "ZCode最小四表：元信息message.data、内容part.data、轮次metadata.turnId、稳定sequence、会话事实upsert、回放与模型历史；本轮证据见storage_alignment_review",
       "status": "passing",
       "evidence": "uv run pytest 13 passed：draft 幂等/sequence 首次分配后保留/工具 part 生命周期单行推进/软删过滤/回放按 turn 分组与末条 text 提升为 final_text/孤儿轮 stopped/审批留痕与未决恢复/load_history 含 tool_use+合成 tool_result 与 compact 边界；tmp-data 自动清理",
       "testedAt": "2026-09-27"
@@ -108,7 +108,7 @@
     {
       "id": "BE-009",
       "name": "重新生成",
-      "description": "重新生成最后一轮：保留用户消息，删除旧助手消息/部件/该轮事实并重跑；错误重试同机制，文件/命令副作用不回滚",
+      "description": "重跑最后一轮：保留用户message/text part，更新JSON轮次标签，级联清助手内容并按JSON标签清事实；文件/命令副作用不回滚",
       "status": "passing",
       "evidence": "uv run pytest 63 passed：regenerate 全流程(旧回复与旧 turn 事实删除、用户消息保留并改挂新轮、新回复落盘、模型历史仅 user+新 assistant)/draft 会话 404/进行中 409；session_entry 增加 turn_id 列支撑按轮回滚",
       "testedAt": "2026-09-27"
@@ -140,7 +140,7 @@
     {
       "id": "BE-013",
       "name": "用量聚合(SQLite)",
-      "description": "turn 事实 data 增加 input_tokens(输入累计)/context_tokens(最近一步 input≈上下文占用)；session 表 +input_tokens 列(与 tokens_used 输出并排)；主循环喂 deps.last_input_tokens 激活 compact 真实预算；recalc_session_usage 接线到 regenerate 修复被删轮双算；TokenBadge 改真实占用口径(used/window+百分比)；part 级分摊与独立 usage 库明确不做",
+      "description": "turn事实保存输入/输出/上下文及缓存用量；会话展示从事实聚合，重跑清除旧事实后自然扣除用量；无重复累计列",
       "status": "passing",
       "evidence": "pytest 70 passed：新增 test_usage_aggregation 2 例(turn 事实三级字段+会话双列+last_input=9；回滚重算 7/29→3/9)；subtask 计入测试扩 input 断言(120/20)；npm build 通过；浏览器实测徽标 1.8k/1.0M·0%(截图 tmp/gui-verify/v4-usage-badge.png)；改表已删库重建",
       "testedAt": "2026-10-01"
@@ -216,5 +216,12 @@
     "status": "blocked",
     "evidence": "假LLM专项12过；全量91过/3既有失败，基线84过/同3失败；build通过361.83kB，lint原有5警告。复查截图明确某扩展屏蔽127.0.0.1，正常云浏览器API同报ERR_BLOCKED_BY_CLIENT；UI仍未验，无真实模型调用。",
     "boundaries": "UI待验；PowerShell缺失2项、Linux Windows盘符断言1项未扩修；此checkout无旧历史，无迁移/清理工具"
+  },
+  "storage_alignment_review": {
+    "date": "2026-10-09",
+    "status": "passing",
+    "scope": "按ZCode最小四表组织存储；正文统一text part，JSON元信息，保留现有功能；修复运行态回放",
+    "evidence": "新10例全过；受影响专项61过；全量101过/3既有平台失败。前端类型/build通过、lint 0错误/3既有警告；真实前后端+假模型浏览器通过发送、任务板、刷新、重跑、审批通过/拒绝/恢复、停止、错误重试。",
+    "boundaries": "无付费模型调用；3项PowerShell/Windows路径既有失败保留。非ZCode全功能复制；保留todo/error等项目类型。空库不迁移。"
   }
 }

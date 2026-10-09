@@ -26,21 +26,22 @@ def test_draft_ensure_session_once(store_db) -> None:
     again = store.ensure_session(d, "s1", "other-model", "第二次不该生效")
     assert row.id == again.id and row.title == again.title
     assert len(row.title) <= 30
-    assert row.model == "test-model"
+    assert store.session_info(d, row)["model"] == "test-model"
 
 
 def test_message_sequence_assign_and_preserve(store_db) -> None:
     """sequence：首次 max+1 递增；同 id 再次 upsert（正文更新）时保留原 sequence。"""
     d = store_db
     _session(d)
-    m1 = store.upsert_message(d, "s1", "m1", "user", {"text": "你好"}, "t1")
-    m2 = store.upsert_message(d, "s1", "m2", "assistant", {"text": ""}, "t1")
+    m1 = store.save_user_message(d, "s1", "m1", "你好", "t1")
+    m2 = store.upsert_message(d, "s1", "m2", "assistant", {}, "t1")
     assert (m1.sequence, m2.sequence) == (1, 2)
 
     # 同 id 重写：正文更新、sequence 不变（ZCode 防时间线漂移规则）
-    m1_again = store.upsert_message(d, "s1", "m1", "user", {"text": "你好（修正）"}, "t1")
+    m1_again = store.save_user_message(d, "s1", "m1", "你好（修正）", "t1")
     assert m1_again.sequence == 1
-    assert json.loads(m1_again.data)["text"] == "你好（修正）"
+    assert "text" not in json.loads(m1_again.data)
+    assert store.part_data(d.get(Part, "m1"))["text"] == "你好（修正）"
     assert m1_again.time_updated >= m1_again.time_created
 
 
@@ -48,7 +49,7 @@ def test_part_lifecycle_upsert(store_db) -> None:
     """工具部件：同一 partID 按生命周期逐态推进，行数始终为 1。"""
     d = store_db
     _session(d)
-    store.upsert_message(d, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.upsert_message(d, "s1", "a1", "assistant", {}, "t1")
     common = dict(session_id="s1", message_id="a1", kind="tool_call", turn_id="t1")
     store.upsert_part(d, part_id="p1", data={"name": "bash", "status": "pending"}, **common)
     store.upsert_part(d, part_id="p1", data={"name": "bash", "status": "running"}, **common)
@@ -57,14 +58,14 @@ def test_part_lifecycle_upsert(store_db) -> None:
     )
     rows = list(d.execute(select(Part)).scalars())
     assert len(rows) == 1
-    assert json.loads(final.data)["status"] == "completed"
+    assert json.loads(final.data)["state"]["status"] == "completed"
 
 
 def test_soft_delete(store_db) -> None:
     """软删：get/list 不可见，重复删返回 False。"""
     d = store_db
     _session(d)
-    store.upsert_message(d, "s1", "m1", "user", {"text": "hi"}, "t1")
+    store.save_user_message(d, "s1", "m1", "hi", "t1")
     assert store.list_sessions(d) != []
     assert store.soft_delete_session(d, "s1") is True
     assert store.get_session(d, "s1") is None
@@ -79,8 +80,8 @@ def _seed_two_turns(d) -> None:
     """构造两轮对话：t1 完整收口；t2 只有部分行（孤儿轮）。"""
     _session(d)
     # turn1：用户 → assistant(text 过程 + tool_call + text 最终) + turn 事实
-    store.upsert_message(d, "s1", "u1", "user", {"text": "查一下文件"}, "t1")
-    store.upsert_message(d, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.save_user_message(d, "s1", "u1", "查一下文件", "t1")
+    store.upsert_message(d, "s1", "a1", "assistant", {}, "t1")
     store.upsert_part(d, "s1", "a1", "p_t1_text1", "text", {"text": "我先看看目录"}, "t1")
     store.upsert_part(
         d, "s1", "a1", "p_t1_tool", "tool_call",
@@ -93,8 +94,8 @@ def _seed_two_turns(d) -> None:
         "active_ms": 1800.0, "state": "success", "tokens_used": 100,
     })
     # turn2：孤儿轮（无收口事实）
-    store.upsert_message(d, "s1", "u2", "user", {"text": "继续"}, "t2")
-    store.upsert_message(d, "s1", "a2", "assistant", {"text": ""}, "t2")
+    store.save_user_message(d, "s1", "u2", "继续", "t2")
+    store.upsert_message(d, "s1", "a2", "assistant", {}, "t2")
     store.upsert_part(d, "s1", "a2", "p_t2_text", "text", {"text": "部分输出"}, "t2")
 
 
@@ -130,7 +131,7 @@ def test_replay_approval_trace_and_pending(store_db) -> None:
     """审批：留痕进工作块；未决审批出现在 pending_approval；处理后消失。"""
     d = store_db
     _session(d)
-    store.upsert_message(d, "s1", "u1", "user", {"text": "删除文件"}, "t1")
+    store.save_user_message(d, "s1", "u1", "删除文件", "t1")
     store.put_entry(d, "s1", "approval", {
         "turn_id": "t1", "request_id": "r1", "tool": "bash",
         "input": {"command": "del a.txt"}, "reason": "shell 删除命令",
@@ -170,15 +171,15 @@ def test_load_history_tool_roundtrip(store_db) -> None:
     """历史重建：assistant 的 text+tool_use 与合成 tool_result、后续用户消息齐全。"""
     d = store_db
     _session(d)
-    store.upsert_message(d, "s1", "u1", "user", {"text": "看看目录"}, "t1")
-    store.upsert_message(d, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.save_user_message(d, "s1", "u1", "看看目录", "t1")
+    store.upsert_message(d, "s1", "a1", "assistant", {}, "t1")
     store.upsert_part(d, "s1", "a1", "pt", "text", {"text": "我看看"}, "t1")
     store.upsert_part(
         d, "s1", "a1", "pc", "tool_call",
         {"tool_call_id": "tc1", "name": "glob", "input": {"pattern": "*"}, "status": "completed", "output": "a.py"},
         "t1",
     )
-    store.upsert_message(d, "s1", "u2", "user", {"text": "谢谢"}, "t2")
+    store.save_user_message(d, "s1", "u2", "谢谢", "t2")
 
     history = replay.load_history(d, "s1")
     assert history[0] == {"role": "user", "content": "看看目录"}
@@ -199,14 +200,14 @@ def test_load_history_compact_boundary(store_db) -> None:
     """压缩边界：before_sequence 之前的历史不再发给模型，摘要以 user 消息置顶。"""
     d = store_db
     _session(d)
-    store.upsert_message(d, "s1", "u1", "user", {"text": "第一轮"}, "t1")
-    store.upsert_message(d, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.save_user_message(d, "s1", "u1", "第一轮", "t1")
+    store.upsert_message(d, "s1", "a1", "assistant", {}, "t1")
     store.upsert_part(d, "s1", "a1", "p1", "text", {"text": "第一轮回复"}, "t1")
     store.put_entry(d, "s1", "compaction", {
         "turn_id": "t2", "before_sequence": 2, "summary_text": "之前聊了第一轮",
         "tokens_before": 500, "tokens_after": 120, "time": 1.0,
     })
-    store.upsert_message(d, "s1", "u2", "user", {"text": "第二轮"}, "t2")
+    store.save_user_message(d, "s1", "u2", "第二轮", "t2")
 
     history = replay.load_history(d, "s1")
     assert history[0]["role"] == "user"
@@ -219,9 +220,9 @@ def test_load_history_compact_boundary(store_db) -> None:
 def test_load_history_two_step_tool_roundtrip(store_db) -> None:
     """回归：assistant(工具) 后紧跟 assistant(正文) 时，tool_result 必须插在中间。"""
     store.ensure_session(store_db, "s1", "test-model", "创建文件")
-    store.upsert_message(store_db, "s1", "u1", "user", {"text": "创建文件"}, "t1")
+    store.save_user_message(store_db, "s1", "u1", "创建文件", "t1")
     # 第一步：text + tool_use
-    store.upsert_message(store_db, "s1", "a1", "assistant", {"text": ""}, "t1")
+    store.upsert_message(store_db, "s1", "a1", "assistant", {}, "t1")
     store.upsert_part(store_db, "s1", "a1", "pa1", "text", {"text": "我来创建"}, "t1")
     store.upsert_part(
         store_db, "s1", "a1", "pc1", "tool_call",
@@ -229,9 +230,9 @@ def test_load_history_two_step_tool_roundtrip(store_db) -> None:
         "t1",
     )
     # 第二步：工具后的收尾正文（同一轮的第二步）
-    store.upsert_message(store_db, "s1", "a2", "assistant", {"text": ""}, "t1")
+    store.upsert_message(store_db, "s1", "a2", "assistant", {}, "t1")
     store.upsert_part(store_db, "s1", "a2", "pa2", "text", {"text": "创建完成"}, "t1")
-    store.upsert_message(store_db, "s1", "u2", "user", {"text": "下一步"}, "t2")
+    store.save_user_message(store_db, "s1", "u2", "下一步", "t2")
 
     history = replay.load_history(store_db, "s1")
     # 期望：u1 → a1(text+tool_use) → user(tool_result) → a2(text) → u2
