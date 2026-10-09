@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-harness.py - 单文件通用助手 Harness
+mini_harness.py - 单文件通用助手 Harness
 
     用户输入 -> 压缩 -> LLM -> 有 tool_use ? -> 权限 hooks -> 工具 -> 回填
                                 | 否: /goal 模式过目标闸门,否则结束
@@ -39,9 +39,10 @@ harness.py - 单文件通用助手 Harness
     2. 删除命令统一将目标移动到 rubbish/ 而不是销毁.
 
 快速开始:
-    1. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY, ANHROPIC_BASE_URL 与 MODEL_ID
-    2. uv sync                            # 安装依赖(如无需指定依赖安装目录, 此步骤可省, 3会自动安装)
-    3. uv run harness.py                  # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
+    在 scripts_mini_harness/ 目录中:
+    1. 复制 .env.example 为 .env,填写 ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL 与 MODEL_ID
+    2. uv sync --locked                   # 使用本目录的独立依赖配置
+    3. uv run python mini_harness.py       # 交互 REPL; 输入任务直接执行,/goal <条件> 进入目标模式
 """
 
 # /// script
@@ -1271,7 +1272,7 @@ def agent_loop(messages: list, active_request: str,
         messages.append({"role": "user", "content": results})
 
 
-# ============ §11 入口: REPL 是唯一使用形态,测试在 test/ 目录 ============
+# ================== §11 入口: REPL 是唯一使用形态 ==================
 
 def repl() -> None:
     """交互主循环: 唯一的任务提交入口."""

@@ -1,63 +1,51 @@
-# 法律助手 Harness
+# 个人助手 Harness
 
-初版，开发中
-目前已完成基础 Harness 的开发：`scripts_mini_harness/mini_harness.py`
-```text
-用户输入 -> 压缩 -> LLM -> 有 tool_use ? -> 权限 hooks -> 工具 -> 回填
-                                | 否: /goal 模式过目标闸门,否则结束
+单用户本地 Web 助手：对话、读写工作区文件、执行命令、管理任务和派出子助手。
+会话与日志保存在本机，对话按配置发送至模型 API。
 
-Tool:
-bash / read_file / write_file / edit_file / glob /
-delete_file(移入 rubbish/) / todo_write / load_skill / subtask(子助手)
+## 项目入口
+
+| 目录 | 用途 |
+|---|---|
+| [backend/](backend/) | FastAPI + SQLite 后端，使用自己的 Python 配置与锁文件 |
+| [frontend/](frontend/) | React + TypeScript + Vite 前端 |
+| [scripts_mini_harness/](scripts_mini_harness/) | 独立 CLI 参考实现，使用自己的 Python 配置与锁文件 |
+| [docs/](docs/) | 产品、架构、验证纪律与会话交接 |
+
+根目录只提供项目导航；安装依赖、运行和测试都在对应子目录进行。
+
+## 运行 Web 助手
+
+需要 Python 3.12+、uv 和 Node.js。首次运行按 [启动说明](docs/init.md) 安装依赖、
+配置 `backend/.env`，然后在两个终端分别启动：
+
+```bash
+cd backend
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8100
 ```
 
-## 九个机制各自的实现(括号 = 代码所在分区)
+```bash
+cd frontend
+npm run dev
+```
 
-| 机制 | 实现 | 补充说明 |
-|---|---|---|
-| **1. Agent Loop** | `agent_loop` 的 `while True`：调模型，无 `tool_use` 即停；有则执行工具并把 `tool_result` 回填继续 | 错误也作为 `tool_result` 喂回，不抛异常打断循环（§10） |
-| **2. Tool Use** | `TOOLS` 存给模型看的 schema，`TOOL_HANDLERS` 是名字 → 函数的 dispatch map；`execute_tool` 统一拦截 → 分发 → 兜异常（§2） | 文件操作全部先过 `safe_path` 沙箱 |
-| **3. Permission** | `permission_hook` 三道闸门：禁止清单硬拒 / 越界与 shell 删除硬拒 / 高危命令 `[y/N]` 确认；拒绝原因作为 `tool_result` 喂回模型（§4） | 词表 = `sudo` 等；删除词；`chmod 777` 等 5 个确认词 |
-| **4. Hooks** | `UserPromptSubmit / PreToolUse / PostToolUse / Stop` 四个事件点挂回调，`trigger_hooks` 里第一个返回非 `None` 的回调生效（§3） | `Pre` = 权限 + 日志；`Post` = 大输出告警；`Stop` = 计数；`Submit` 无注册 |
-| **5. Task System** | `TodoManager` 内存任务板，`todo_write` 全量替换；3 轮未更新就在工具结果里注入提醒（§5） | 渲染 `[ ] / [>] / [x]` 面板；单 `in_progress`；上限 20 条 |
-| **6. Subagents** | `subtask(prompt)` 用全新 `messages` 跑 30 轮独立循环，最终文本作 `tool_result` 返回父级；同一响应里的多个 `subtask` 严格串行（§7） | 子助手仅 6 个基础工具，无 `subtask`，防递归 |
-| **7. Context Compact** | `ContextCompactor` 四级压缩：新结果落盘留预览 → 中间历史归档 → 旧结果缩短 → LLM 摘要重写；真实 token 计量，占窗口 80% 触发，压到 60%（§8） | 归档 `.transcripts/` 与 `.task_outputs/`；重试 1 次 |
-| **8. Skill** | 启动扫描 `skills/*/SKILL.md`，system prompt 只放“名称 + 描述”目录，`load_skill` 按需取全文（§6） | frontmatter 只取 `name / description` 两字段 |
-| **9. Goal Loop** | `/goal` 后模型每次想停，由无工具的独立判断器裁定；JSON `{ok, reason, impossible}`；未达成注入理由自动续轮，连续 8 次未放行收口交还用户（§9） | `max_tokens=512`；连续 8 次收口；error 不计数 |
+打开 Vite 输出的本地地址。后端命令工具使用 PowerShell，需要运行环境提供该命令。
 
-## 硬性约束
+## CLI 参考实现
 
-1. 所有文件操作必须在项目根目录（启动目录）内，越界一律拒绝；
-2. 删除命令统一将目标移动到 `rubbish/`，而不是销毁。
+[mini_harness.py](scripts_mini_harness/mini_harness.py) 用于理解九个 Harness 机制，
+与 Web 后端各自独立；`/goal` 只在此参考实现中提供。
+先复制 `scripts_mini_harness/.env.example` 为同目录的 `.env` 并填写模型配置，再运行：
 
-## 快速开始
+```bash
+cd scripts_mini_harness
+uv sync --locked
+uv run python mini_harness.py
+```
 
-1. 复制 `.env.example` 为 `.env`，填写：
+## 文档
 
-   ```env
-   ANTHROPIC_API_KEY=
-   ANHROPIC_BASE_URL=
-   MODEL_ID=
-   ```
-
-2. 安装依赖：
-
-   ```bash
-   uv sync
-   ```
-
-   如无需指定依赖安装目录，此步骤可省，步骤 3 会自动安装。
-
-3. 启动：
-
-   ```bash
-   uv run harness.py
-   ```
-
-   交互 REPL；输入任务直接执行：
-
-   ```text
-   /goal <条件>
-   ```
-
-   进入目标模式。
+- [产品行为](docs/PRODUCT.md)
+- [架构与九机制实现](docs/ARCHITECTURE.md)
+- [运行与测试纪律](docs/RELIABILITY.md)
+- [当前交接与未解决项](docs/session-handoff.md)

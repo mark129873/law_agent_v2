@@ -12,14 +12,7 @@
 import { useCallback, useRef, useState } from 'react'
 
 import { streamRegenerate, streamTurn, type ExecutionDraft } from '../api/client'
-import type { SseEvent, ToolStatus, TurnData, WorkItem } from '../types'
-
-export interface LiveTurnState {
-  turn: TurnData | null
-  isStreaming: boolean
-  error: string | null
-  tokenCount: { input: number; output: number } | null
-}
+import type { SseEvent, TurnData, WorkItem } from '../types'
 
 /** 实时流中的未决审批（弹窗数据源；刷新恢复走回放的 pending_approval，形状一致） */
 export interface LivePendingApproval {
@@ -32,10 +25,10 @@ export interface LivePendingApproval {
 }
 
 export function useSessionStream(sessionId: string | null) {
+  // 用量徽标读取收口后的回放，只维护界面实际消费的实时状态。
   const [turn, setTurn] = useState<TurnData | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tokenCount, setTokenCount] = useState<{ input: number; output: number } | null>(null)
   // 未决审批（FE-4 弹窗数据源）：approval_request 置入，approval_resolved 清除
   const [pendingApproval, setPendingApproval] = useState<LivePendingApproval | null>(null)
 
@@ -85,7 +78,7 @@ export function useSessionStream(sessionId: string | null) {
             id: event.tool_call_id,
             name: event.name,
             input: event.input,
-            status: 'running' as ToolStatus,
+            status: 'running',
             output: '',
             time: Date.now(),
           })
@@ -193,10 +186,6 @@ export function useSessionStream(sessionId: string | null) {
           if (pendingApprovalRef.current?.request_id === event.request_id) setPendingApproval(null)
           break
 
-        case 'token_count':
-          setTokenCount({ input: event.input_tokens, output: event.output_tokens })
-          break
-
         case 'compacted':
           appendItem({
             kind: 'compaction',
@@ -234,7 +223,6 @@ export function useSessionStream(sessionId: string | null) {
       setError(null)
       setPendingApproval(null)
       setIsStreaming(true)
-      setTokenCount(null)
       sentTextRef.current = text
       turnRef.current = null
 
@@ -279,5 +267,5 @@ export function useSessionStream(sessionId: string | null) {
     [sessionId, isStreaming, applyEvent],
   )
 
-  return { turn, isStreaming, error, tokenCount, send, regenerate, setError, clearTurn, pendingApproval, setPendingApproval }
+  return { turn, isStreaming, error, send, regenerate, clearTurn, pendingApproval }
 }

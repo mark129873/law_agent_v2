@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
+from app.agent.skills import tool_load_skill
 from app.config import settings
 
 # ---------- 沙箱 ----------
@@ -143,13 +144,6 @@ def tool_delete_file(path: str) -> str:
         return f"已删除 {path}（移入 .rubbish/{trash_name}，可找回）"
     except Exception as exc:
         return f"Error: 删除失败：{exc}"
-
-
-def tool_load_skill(name: str) -> str:
-    """读取技能全文（实现见 skills.py；这里挂进分发表）。"""
-    from app.agent.skills import tool_load_skill as _impl
-
-    return _impl(name)
 
 
 # ---------- 双表注册 ----------

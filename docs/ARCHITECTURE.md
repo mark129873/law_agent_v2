@@ -1,6 +1,6 @@
 # ARCHITECTURE — 后端 Harness
 
-> 对照 [README](../README.md) 的九个机制；用户行为见 [PRODUCT.md](PRODUCT.md)，运行纪律见 [RELIABILITY.md](RELIABILITY.md)。
+> 九机制参考 [mini_harness.py](../scripts_mini_harness/mini_harness.py)；项目入口见 [README](../README.md)，用户行为见 [PRODUCT.md](PRODUCT.md)，运行纪律见 [RELIABILITY.md](RELIABILITY.md)。
 
 ## 1. 九个机制
 
@@ -24,7 +24,7 @@
 - 运行：同会话单turn，跨会话可并行；工具逐个执行；停止在检查点生效，不强杀命令。
 - 状态：mode、权限规则全项目共享；事件经同一Queue输出SSE，断线不取消后台turn。
 - 复用：发送/重跑共用turn装配；主/子共用模型调用记录与审批等待，循环和工具范围独立。
-- README描述参考脚本；上述未接通项为当前源码状态，完整待核对清单见[交接文档](session-handoff.md)。
+- Web后端与CLI参考脚本各自使用目录内的依赖配置；根目录仅作导航。上述未接通项为当前源码状态，完整待核对清单见[交接文档](session-handoff.md)。
 
 ## 2. 对话数据存储
 

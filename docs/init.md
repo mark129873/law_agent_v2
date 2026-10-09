@@ -1,5 +1,7 @@
 # init.md -- 开始工作前，请验证项目可以正常无报错构建。
 
+安装与执行均在下列子目录进行，根目录不提供 Python 项目环境。
+
 ## 后端（backend/，uv 管理）
 
 1. 首次准备：`cd backend && cp .env.example .env` 并填入 `ANTHROPIC_API_KEY` 等
@@ -12,6 +14,12 @@
 1. 安装依赖：`cd frontend && npm install`
 2. 构建验证：`cd frontend && npm run build`
 3. 启动：`cd frontend && npm run dev`（http://localhost:5173，/api 代理到后端 8100；联调需先启动后端）
+
+## CLI 参考实现（scripts_mini_harness/）
+
+1. 配置：进入该目录，复制 `.env.example` 为 `.env` 并填写模型配置。
+2. 安装依赖：`uv sync --locked`
+3. 启动：`uv run python mini_harness.py`（工作区为启动目录，独立于 Web 后端）
 
 ## 注意
 

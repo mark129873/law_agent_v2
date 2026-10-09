@@ -204,3 +204,22 @@
 - 边界：错误页绑定另报URL policy/protocol not allowed；停止该路径，未禁用安全设置、换地址或浏览器绕过。官方浏览器排障文档未提供适用的授权本地预览入口。三模式/todo/审批/历史回放及取消/返回/重复输入的本轮UI验收仍未完成。
 - 服务：此前测试data移入tmp后重新启动既有假LLM脚本，启动日志正常；exec随后executor key changed，无法恢复该会话停止进程。后续查询未见serve_fake/vite，但不能证明宿主完整状态；原生终端输入报window does not expose a Paste action。不能将未确认清理写成已完成。
 - 收尾：仅更新验收文档，不改源码；既有12专项/91过3既有失败/build证据不变，未重新全量运行、无真实付费模型调用。JSON/差异检查通过；功能状态维持blocked，宿主服务清理待确认。
+
+### Session 011
+
+- 日期：2026-10-09
+- 目标：先将dot快进合并并推送main，再按用户要求清理无用代码与重复入口；保留参考脚本，删除参考测试。
+- 完成：
+  - main已快进到dot的6d8b8b6并推送，随后在main进行本轮清理。
+  - 删除未消费的前端token状态、未使用接口/setter导出、无效果JSON replacer；组件内部常量与函数收为私有。
+  - 删除后端未用布尔配置函数、默认规则常量；技能handler直接注册已有实现。
+  - 删除根目录重复pyproject/uv.lock、Vite素材与前端模板README；根README改为Web/CLI项目导航，校准启动命令和文档链接。
+  - 按用户明确要求删除scripts_mini_harness/test/test_harness.py及pytest开发依赖；保留mini_harness.py、配套技能和独立运行依赖，锁文件仅移除7个测试相关包。
+- 验证：
+  - 标准backend/ uv run pytest -q：91 passed / 3既有平台失败，与本轮合并后基线一致；没有跳过、修改测试断言或扩修跨平台行为。
+  - frontend/ npm run build通过（主包361.65kB，Markdown包326.57kB）；npm run lint无错误，既有警告由5降至3。
+  - CLI uv sync --locked与锁文件一致性检查通过；uv run python mini_harness.py输入q正常启动并退出，无模型调用；保留运行依赖的完整锁记录未变。
+  - backend/data与log的文件元数据快照一致；pytest临时目录已清理。JSON、文档链接、差异与仓库卫生核对通过；本轮无用户可见交互或视觉改动，未重复浏览器E2E。
+- 收尾：cleanup_review单独记录清理验收，不覆盖19项passing、1项deprecated、1项blocked的历史状态；既有Harness和UI验收缺口保留。临时记录、依赖与构建产物不入库。
+- 提交：refactor: 清理无用代码与重复项目入口；按用户要求推送main。
+- 下一步：按需收拢前端发送/重跑生命周期与审批/子助手状态；另行处理既有平台测试和UI验收缺口。

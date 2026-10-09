@@ -33,12 +33,6 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    """读取布尔配置，接受 true/false/1/0/yes/no。"""
-    raw = _env_str(name, str(default)).lower()
-    return raw in ("true", "1", "yes", "on")
-
-
 @dataclass
 class Settings:
     """全部运行配置。字段含义见 backend/.env.example 的逐项中文注释。"""

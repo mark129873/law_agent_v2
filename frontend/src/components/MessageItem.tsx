@@ -26,7 +26,7 @@ export function MarkdownWithCopy({ text, streaming = false, onRegenerate }: { te
 }
 
 // 状态词映射（产品文档 §3.3）
-export const TOOL_STATUS_WORD: Record<string, string> = {
+const TOOL_STATUS_WORD: Record<string, string> = {
   pending: '等待中',
   running: '执行中',
   completed: '已执行',
@@ -36,18 +36,15 @@ export const TOOL_STATUS_WORD: Record<string, string> = {
 }
 
 /** 工具输入摘要：一行内的参数预览 */
-export function inputSummary(input: unknown): string {
+function inputSummary(input: unknown): string {
   if (input == null) return ''
   if (typeof input === 'string') return input
   try {
-    return JSON.stringify(input, ensureAsciiNone)
+    // JSON.stringify 原生保留中文，不需要额外的逐字段转换函数。
+    return JSON.stringify(input)
   } catch {
     return String(input)
   }
-}
-
-function ensureAsciiNone(_k: string, v: unknown) {
-  return v
 }
 
 /** 用户消息气泡：右对齐浅灰底纯文本 */

@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 
 _MODES = ("build", "edit", "yolo")
-_DEFAULT_RULES = {"version": 1, "allow": [], "deny": []}
 
 
 def _read_json(path: Path) -> dict | None:

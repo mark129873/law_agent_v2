@@ -1,6 +1,13 @@
 {
   "project": "law_agent_v2",
   "description": "个人助手harness",
+  "cleanup_review": {
+    "date": "2026-10-09",
+    "scope": "清理未使用状态、辅助代码、根目录重复Python配置与Vite模板；保留CLI参考脚本，按用户要求删除其测试和pytest依赖",
+    "status": "passing",
+    "evidence": "build通过，主包361.65kB；lint 0错误/3既有警告（原5）；隔离空库+假LLM pytest 91过/3既有平台失败，与合并前一致；CLI安装、启动输入q正常退出且无模型调用；运行依赖版本不变，真实数据未改。",
+    "boundaries": "仅清理验收；后端3项平台失败、既有Plan移除UI验收blocked及Harness缺口保留；未新增或弱化测试，未重复浏览器E2E。"
+  },
   "frontend_review": {
     "date": "2026-10-08",
     "scope": "暖金黄工作台：导航、欢迎页、输入、工作卡、子助手、审批与Markdown；保留路由和后端契约",
