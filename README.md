@@ -64,10 +64,10 @@ npm run dev
 
 | 表              | 保存内容                                                                |
 | -------------- | ------------------------------------------------------------------- |
-| session        | 项目、目录、标题、时间、归档标记                                                    |
-| message        | 用户/助手元信息；data 内 role、anchor.turnId、modelId、tokens、error；sequence 排序 |
-| part           | 正文、工具参数/状态/结果、压缩信息；归属 message                                       |
-| local\_setting | 项目权限模式与规则；scope/scope\_id/namespace/key 定位，value 存 JSON             |
+| session        | 会话id、project_id、工作区完整路径、标题、时间、归档                                                    |
+| message        | 消息id, session_id, 顺序sequence, 时间, data(身份、模型、轮次、用量、错误等元信息；不存普通正文) |
+| part           | 部件 id, message_id, session_id, sequence, 时间,data(正文text、工具tool或压缩信息compaction) |
+| local\_setting | 项目权限模式:{"mode":"edit/edit/yolo"}, 规则rule_set:{"allow":[{"toolName":"bash","ruleContent":"git status"}],"deny":[{"toolName":"delete_file"}],"ask":[{"toolName":"write_file"}]}            |
 | todo           | 当前任务的内容、状态、顺序、时间                                                    |
 | turn\_usage    | turn 状态、起止时间、总耗时、输入/输出及缓存 token                                     |
 
