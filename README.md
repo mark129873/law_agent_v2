@@ -62,29 +62,29 @@ npm run dev
 
 ### 2.1 SQLite：会话事实
 
-session
+session表
+- 会话id、project\_id、工作区完整路径、标题、时间、归档
 
-- 会话id、project_id、工作区完整路径、标题、时间、归档
+message表
+- 消息id, session\_id, 顺序sequence, 时间
+- &#x20;data(身份、模型、轮次、用量、错误等元信息)
 
-message
+part表
+- 部件 id, message\_id, session\_id, sequence, 时间
+- data(正文text、工具tool或压缩信息compaction)
 
-- 消息id, session_id, 顺序sequence, 时间, data(身份、模型、轮次、用量、错误等元信息；不存普通正文)
+local\_setting表
+- 项目权限模式:{"mode":"edit/edit/yolo"}
+- 规则rule\_set:{"allow":\[{"toolName":"bash","ruleContent":"git status"}],"deny":\[{"toolName":"delete\_file"}],"ask":\[{"toolName":"write\_file"}]}
 
-part
+todo表
+- 联合主键(session_id, 顺序position), 任务内容content,  时间
+- 状态status: pending 待办 / in_progress 进行中 / completed 完成
 
-- 部件 id, message_id, session_id, sequence, 时间,data(正文text、工具tool或压缩信息compaction)
+turn\_usage表
+- 联合主键(session_id, turn_id), user_message_id, 时间, 总耗时, 输入/输出及缓存 token
+- status: running 运行 / completed 完成 / error 失败 / cancelled 停止
 
-local\_setting
-
-- 项目权限模式:{"mode":"edit/edit/yolo"}, 规则rule_set:{"allow":[{"toolName":"bash","ruleContent":"git status"}],"deny":[{"toolName":"delete_file"}],"ask":[{"toolName":"write_file"}]}
-
-todo
-
-- 当前任务的内容、状态、顺序、时间
-
-turn\_usage
-
-- turn 状态、起止时间、总耗时、输入/输出及缓存 token
 
 ### 2.2 model-io：模型调用快照
 
@@ -122,7 +122,6 @@ usage
 
 - 调试审计，不参与回放；写失败吞异常、记WARNING，不阻断对话
 
-
 ## 3. 上下文压缩
 
 触发
@@ -136,7 +135,6 @@ microcompact
 compact
 
 - 仍超预算则LLM摘要此前历史；当前用户请求保留原文，不参与摘要
-
 
 # 初版最小harness实现 `scripts_mini_harness/mini_harness.py`
 
