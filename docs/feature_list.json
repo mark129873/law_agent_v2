@@ -230,5 +230,12 @@
     "status": "passing",
     "evidence": "新增4项步数边界通过；隔离空库/假模型全量105通过、3项既有平台失败，原循环复测同3项失败。架构文档相对链接全部存在，diff检查通过。",
     "boundaries": "未改前端/权限/模型重试；未做真实模型或UI验收；PowerShell缺失与Windows路径差异保留。"
+  },
+  "local_setting_permission_review": {
+    "date": "2026-10-10",
+    "status": "passing",
+    "scope": "仅local_setting permission存储，原四表/审批UI不变；AGENTS约束README人工维护",
+    "evidence": "新增10例通过；全量115过/3既有平台失败。覆盖八字段/联合主键/索引、项目隔离、重启、upsert时间、并行追加、旧JSON不读取、规则判断。真实独立进程HTTP读取edit且会话列表200。",
+    "boundaries": "旧JSON不迁移；默认build/空规则。未改四表、未新增会话授权或三选项；无真实模型调用，未做Windows/UI验收。"
   }
 }

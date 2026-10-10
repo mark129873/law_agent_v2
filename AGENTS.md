@@ -81,3 +81,7 @@
 | [session-handoff.md](docs/session-handoff.md) | 会话交接：已验证 / 本轮改动 / 风险与 blocker / 下一步 | 接手会话 / 收尾 |
 | [clean-state-checklist.md](docs/clean-state-checklist.md) | 收尾核对清单（启动测试 / 文档同步 / 仓库状态） | 每次收尾 |
 | archive/ | 冷存储（旧 progress/feature_list 条目沉降区） | 沉降时 |
+
+## 特别规定
+
+- README.md 仅由用户本人手动修改；助手不得自动修改 README.md。

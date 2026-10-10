@@ -1,5 +1,14 @@
 # 会话交接
 
+## 最新（2026-10-10，Session 014）
+
+- 基准 main 76970df；本轮仅新增 local_setting permission 存储，原四张会话表与审批选项不变。
+- 模式/规则读写改 SQLite；八字段/联合主键/索引对齐 ZCode。当前项目 ID 为规范工作区路径 SHA-256；无多项目界面。
+- 旧 JSON 原样保留但不读取/迁移，首次默认 build/空规则；当前四表结构已有库只会新增配置表，无需删除用户数据。
+- 新增10测试通过；全量115过/3既有平台失败；独立进程真实HTTP模式/会话列表通过。测试隔离目录已清理，无模型调用。
+- README 未修改；AGENTS 已明确仅用户手动修改 README。按授权经 GitHub 插件提交 main 并核验。
+- 后续：审批三选项/仅内存会话工具授权、四表进一步对齐均未实施。
+
 ## 本轮（2026-10-10，Session 013）
 
 - 基准main 26501e0；README四表说明更新，ARCHITECTURE重写为后端Harness结构与数据流，前端仅保留事件消费边界。
@@ -33,7 +42,7 @@
 | 审批恢复 | 子助手fullAccess限制未持久化；重启可能弹出失效请求 | approvals.py、replay.py |
 | 工具呈现 | tool_started在执行结束后才发；自动放行无审批事实 | loop.py |
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
-| 规则/路径 | ask桶未加载；PowerShell无系统沙箱，glob未过safe_path | execution_state.py、permission_service.py、tools.py |
+| 路径 | PowerShell无系统沙箱，glob未过safe_path | permission_service.py、tools.py |
 
 既有限制：长会话全量回放；3条非阻断前端lint警告；Linux缺PowerShell导致2项测试失败，Windows盘符路径断言另有1项失败。既有UI验收blocker见历史验证。
 

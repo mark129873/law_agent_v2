@@ -1,4 +1,4 @@
-"""ZCode 式最小四表：关系/顺序在列中，消息与部件内容在 JSON 中。
+"""ZCode 式四张会话表与 local_setting：内容/配置使用 JSON。
 
 正文仅存 text part；轮次是 metadata.turnId 标签，不是额外容器或列。
 不迁移旧库；结构变更后从空库启动。
@@ -7,7 +7,7 @@
 import time
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -81,3 +81,18 @@ class SessionEntry(Base):
     time_created: Mapped[int] = mapped_column(Integer, default=now_ms)
     time_updated: Mapped[int] = mapped_column(Integer, default=now_ms)
     data: Mapped[str] = mapped_column(String, default="{}")
+
+
+class LocalSetting(Base):
+    """ZCode local_setting 八字段：项目配置与会话事实分开保存。"""
+    __tablename__ = "local_setting"
+    __table_args__ = (Index("local_setting_scope_idx", "scope", "scope_id"),
+                      Index("local_setting_namespace_key_idx", "namespace", "key"))
+    scope: Mapped[str] = mapped_column(String, primary_key=True)
+    scope_id: Mapped[str] = mapped_column(String, primary_key=True)
+    namespace: Mapped[str] = mapped_column(String, primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String, default="{}")
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    time_created: Mapped[int] = mapped_column(Integer, default=now_ms)
+    time_updated: Mapped[int] = mapped_column(Integer, default=now_ms)

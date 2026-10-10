@@ -110,7 +110,7 @@ session
 | TurnDeps.history | 本turn实际发送给模型的历史 | turn开始重建，步间追加，结束释放 |
 | turn_manager | session→turn映射、停止Event | 进程内，不跨重启恢复 |
 | approvals._pending | request_id→等待Event/决定槽位 | 进程内；数据库审计不能重建正在等待的协程 |
-| execution_state.json / permission_rules.json | 模式、权限规则 | 全项目共享，持久化 |
+| SQLite local_setting | permission.mode / ruleset | 按项目持久化；当前固定工作区共享 |
 | workspace/、workspace/.rubbish/ | 工具文件、删除的可恢复副本 | 不随会话重跑撤销 |
 | 前端实时turn | SSE临时展示状态 | 收口后用数据库回放替换 |
 
@@ -160,6 +160,10 @@ session
 
 ### 权限与审批
 
+- local_setting 与 ZCode 对齐八字段：scope、scope_id、namespace、key、value、schema_version、time_created、time_updated；前四项联合主键。
+- scope=project、namespace=permission；mode/ruleset 分行，value 为 JSON，schema_version=1。scope_id 为规范工作区路径的稳定 SHA-256 标识，不是会话 ID。
+- 本轮仅新增配置表，不改四张会话表、不新增多项目界面；原审批选项保持。旧权限 JSON 不迁移、不读取，保留原文件。
+
 - evaluate读取共享模式/规则，返回allow/deny/ask。
 - 判定顺序：硬拒→yolo→deny规则→ask规则→allow规则→edit/build默认策略；yolo跳过普通规则，但不跳过硬拒。
 - ask时保存审批请求，发approval_request，等待进程内Event；POST approval唤醒后保存决定并发approval_resolved。
@@ -202,5 +206,5 @@ session
 | 模型接入 | 保持stream(system,messages,tools)事件协议；核对工具往返和usage语义 |
 
 - Goal Loop仅在CLI参考中；技能目录枚举未注入Web系统提示词；todo无三轮未更新提醒。
-- ask规则桶未从权限文件完整加载；长会话无分页；其余待核对事项见[session-handoff](session-handoff.md)。
+- SQLite规则支持allow/deny/ask三桶；长会话无分页；其余待核对事项见[session-handoff](session-handoff.md)。
 - 本文描述实现，不代表全部场景已运行验收；验证证据见[feature_list.json](feature_list.json)与[progress](progress.md)。

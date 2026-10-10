@@ -36,8 +36,12 @@ def test_execution_state_roundtrip(client, mode) -> None:
     assert client.get("/api/permission/state").json() == {"mode": "build"}
     assert execution_state.save_execution_state(settings.data_dir, mode) == {"mode": mode}
     assert client.get("/api/permission/state").json() == {"mode": mode}
-    saved = json.loads((settings.data_dir / "execution_state.json").read_text())
-    assert saved == {"mode": mode}
+    from app import db
+    from app.models import LocalSetting
+    with db.new_session() as session:
+        row = session.get(LocalSetting, ("project", execution_state.project_id(settings.data_dir), "permission", "mode"))
+        assert json.loads(row.value) == {"mode": mode}
+    assert not (settings.data_dir / "execution_state.json").exists()
     assert not (settings.data_dir / "plans").exists()
 
 
