@@ -245,5 +245,11 @@
     "scope": "必要六表子集；字段/JSON/语义对齐，替换 session_entry",
     "evidence": "pytest 121过；上游SQL列/约束对照通过；build通过，lint 0错误/3既有警告；真实前后端+假模型云浏览器验证任务板、审批刷新/允许/拒绝、子助手、错误重试、停止、重启恢复。",
     "boundaries": "不迁移旧库；审批内存事件重启清空；无真实模型调用。"
+  },
+  "lint_cleanup_review": {
+    "date": "2026-10-10",
+    "status": "passing",
+    "scope": "修复三条前端 lint 警告；按本次授权仅更新 README 2.1",
+    "evidence": "lint 0警告/0错误，build通过；pytest 121过；云浏览器模拟组件验证权限回显/输入保留/草稿发送/计时/折叠/成功失败停止；README其他章节未变。"
   }
 }

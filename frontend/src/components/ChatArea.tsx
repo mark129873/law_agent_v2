@@ -10,7 +10,8 @@
 import { useEffect, useRef } from 'react'
 import { ChatTeardropText, SidebarSimple } from '@phosphor-icons/react'
 
-import { ApprovalModal, pendingFromDetail } from './ApprovalModal'
+import { ApprovalModal } from './ApprovalModal'
+import { pendingFromDetail } from '../utils/approval'
 import { TokenBadge } from './TokenBadge'
 import { TurnGroup } from './TurnGroup'
 import { Composer } from './Composer'

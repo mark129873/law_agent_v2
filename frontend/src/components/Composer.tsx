@@ -22,15 +22,18 @@ const MODE_META: Record<string, { label: string; icon: typeof Hand; hint: string
 export function Composer({ disabled, streaming, permission, onSend, onStop }: ComposerProps) {
   const [text, setText] = useState('')
   const [draftMode, setDraftMode] = useState(permission.mode)
+  const [previousMode, setPreviousMode] = useState(permission.mode)
   const [menuOpen, setMenuOpen] = useState(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const modeButtonRef = useRef<HTMLButtonElement>(null)
 
-  // 服务端状态可能因审批改变；得到权威回显后再同步，不提前写全局权限。
-  useEffect(() => {
+  // 仅服务端模式变化时重置草稿；渲染提交前同步，避免 effect 触发额外更新。
+  // 正文单独保存，审批回显不会清空用户正在输入的内容。
+  if (previousMode !== permission.mode) {
+    setPreviousMode(permission.mode)
     setDraftMode(permission.mode)
-  }, [permission.mode])
+  }
   useEffect(() => {
     if (!menuOpen) return
     const onDown = (e: MouseEvent) => {

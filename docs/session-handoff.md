@@ -1,6 +1,12 @@
 # 会话交接
 
-## 最新（2026-10-10，Session 015）
+## 最新（2026-10-10，Session 016）
+
+- 三条前端 lint 警告已修复；用户授权本次仅更新 README 2.1，其他章节未改。
+- lint 零警告/零错误；build、pytest 121 项通过；云浏览器模拟组件回归通过。
+- 测试服务停止，临时页移入 tmp；通过 GitHub 插件提交 main。
+
+## 历史（2026-10-10，Session 015）
 
 - 基准 main 413997f；ZCode 29628c9；必要六表子集已实现，详见 storage-subset.md。
 - 新结构：session、message、part、local_setting、todo、turn_usage；不迁移旧库。
@@ -52,7 +58,7 @@
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
 | 路径 | PowerShell无系统沙箱，glob未过safe_path | permission_service.py、tools.py |
 
-既有限制：长会话全量回放；3 条前端 lint 警告；PowerShell 无系统沙箱。
+既有限制：长会话全量回放；PowerShell 无系统沙箱。
 
 ## 下一步
 

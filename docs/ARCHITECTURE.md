@@ -209,3 +209,8 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - Goal Loop仅在CLI参考中；技能目录枚举未注入Web系统提示词；todo无三轮未更新提醒。
 - SQLite规则支持allow/deny/ask三桶；长会话无分页；其余待核对事项见[session-handoff](session-handoff.md)。
 - 本文描述实现，不代表全部场景已运行验收；验证证据见[feature_list.json](feature_list.json)与[progress](progress.md)。
+
+### 前端状态同步
+
+- 审批回放转换独立于组件导出，保留热更新边界。
+- 权限模式、工作块展开状态仅在对应输入变化时同步；不在 effect 中追加状态更新。

@@ -9,7 +9,7 @@
  * 其余过程条目全部收在块内。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CaretRight, CheckCircle, CircleHalf, FolderOpen, SquaresFour, StopCircle, TerminalWindow, UsersThree, WarningCircle } from '@phosphor-icons/react'
 
 import { fmtDuration } from '../utils/format'
@@ -36,7 +36,6 @@ function useLiveElapsed(startedAt: number, running: boolean): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!running) return
-    setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [running, startedAt])
@@ -52,15 +51,14 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
   // 默认展开规则：运行中展开；完成收起；停止/失败强制展开
   const defaultOpen = running || turn.state === 'stopped' || turn.state === 'failed'
   const [open, setOpen] = useState(defaultOpen)
-  const prevDefaultOpen = useRef(defaultOpen)
+  const [previousDefaultOpen, setPreviousDefaultOpen] = useState(defaultOpen)
 
-  // 状态翻转（如 running→success）时跟随默认值：完成瞬间自动收起
-  useEffect(() => {
-    if (prevDefaultOpen.current !== defaultOpen) {
-      prevDefaultOpen.current = defaultOpen
-      setOpen(defaultOpen)
-    }
-  }, [defaultOpen])
+  // 默认展开值变化时，在渲染提交前同步；不使用 effect 追加一次更新。
+  // 默认值未变时不重置，保留用户手动展开/收起的选择。
+  if (previousDefaultOpen !== defaultOpen) {
+    setPreviousDefaultOpen(defaultOpen)
+    setOpen(defaultOpen)
+  }
 
   const headerText =
     turn.state === 'running'

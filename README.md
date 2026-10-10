@@ -62,26 +62,28 @@ npm run dev
 
 ### 2.1 SQLite：会话事实
 
-位置：backend/data/app.db；SQLAlchemy + SQLite/WAL。实现：sessions/store.py、recorder.py、replay.py。
+位置：backend/data/app.db；SQLAlchemy + SQLite/WAL。实现：sessions/store.py、recorder.py、replay.py；采用 ZCode 必要六表子集。
 
-| 表              | 保存内容                                                |
-| -------------- | --------------------------------------------------- |
-| session        | 标题、模型、时间、软删标记、输入/输出token累计                          |
-| message        | 用户/助手消息；turn\_id分轮，sequence排序                       |
-| part           | 正文、工具参数/状态/结果、子助手、任务板、错误                            |
-| session\_entry | turn工时/用量、approval请求/决定、compaction摘要/边界、context模型快照 |
+| 表 | 保存内容 |
+| --- | --- |
+| session | 项目、目录、标题、时间、归档标记 |
+| message | 用户/助手元信息；data 内 role、anchor.turnId、modelId、tokens、error；sequence 排序 |
+| part | 正文、工具参数/状态/结果、压缩信息；归属 message |
+| local_setting | 项目权限模式与规则；scope/scope_id/namespace/key 定位，value 存 JSON |
+| todo | 当前任务的内容、状态、顺序、时间 |
+| turn_usage | turn 状态、起止时间、总耗时、输入/输出及缓存 token |
 
 1. **写入**
-   - 首条请求创建会话；用户消息立即保存。
-   - 每模型步开始建assistant行，结束写整段正文；流式delta不逐字落库。
-   - 工具按同一part更新状态；sequence首次分配，更新不变；事实正常只追加。
-   - turn结束保存状态/工时/用量；active\_ms排除审批等待，主/子循环用量一起累计。
+   - 首条请求创建会话并保存用户消息；每模型步创建 assistant，正文写 text part，流式 delta 不逐字落库。
+   - 工具在同一 part 更新状态；sequence 从 0 开始，同归属更新保留顺序。
+   - todo 全量替换；turn_usage 汇总主/子模型用量，duration_ms 包含审批等待。
+   - 审批事件仅存内存：刷新可恢复，重启清空；工具结果仍落库。
 2. **读取与重跑**
-   - load\_replay：按turn分组，末条正文为最终回复；审批按request\_id取最新状态。
-   - load\_history：与load\_replay共用消息/部件查询；重建模型messages、补齐工具往返、按压缩边界裁剪。
-   - regenerate：保留最后用户消息，删除旧回复/该轮事实后重跑并重算用量；不撤销文件/命令操作。
+   - load_replay 按 anchor.turnId 分组，末条正文为最终回复；任务板、子助手卡片从工具记录恢复。
+   - load_history 重建模型 messages 和工具往返；压缩摘要存隐藏合成 user 消息，compaction.tail_start_id 标记已摘要边界消息。
+   - regenerate 保留最后用户消息，删除该轮旧回复/用量/摘要，恢复任务板后重跑；不撤销文件或命令操作。
 
-**不迁移schema**：改models.py表结构 → 删除backend/data/ → 重启建表。
+**不迁移 schema**：停后端 → 删除已确认的测试 app.db 及配套 -wal/-shm → 重启建表；不清工作区。
 
 ### 2.2 model-io：模型调用快照
 
