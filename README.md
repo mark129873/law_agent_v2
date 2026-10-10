@@ -4,7 +4,7 @@
 
 # 项目运行
 
-需要 Python 3.12+、uv 和 Node.js。首次运行需配置 `backend/.env`，然后在两个终端分别启动：
+需要 Python 3.12+、uv 和 Node.js。首次运行需配置 `backend/.env`，然后启动：
 
 ```bash
 uv run --no-project start.py
