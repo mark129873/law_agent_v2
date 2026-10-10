@@ -62,28 +62,14 @@ npm run dev
 
 ### 2.1 SQLite：会话事实
 
-位置：backend/data/app.db；SQLAlchemy + SQLite/WAL。实现：sessions/store.py、recorder.py、replay.py；采用 ZCode 必要六表子集。
-
-| 表 | 保存内容 |
-| --- | --- |
-| session | 项目、目录、标题、时间、归档标记 |
-| message | 用户/助手元信息；data 内 role、anchor.turnId、modelId、tokens、error；sequence 排序 |
-| part | 正文、工具参数/状态/结果、压缩信息；归属 message |
-| local_setting | 项目权限模式与规则；scope/scope_id/namespace/key 定位，value 存 JSON |
-| todo | 当前任务的内容、状态、顺序、时间 |
-| turn_usage | turn 状态、起止时间、总耗时、输入/输出及缓存 token |
-
-1. **写入**
-   - 首条请求创建会话并保存用户消息；每模型步创建 assistant，正文写 text part，流式 delta 不逐字落库。
-   - 工具在同一 part 更新状态；sequence 从 0 开始，同归属更新保留顺序。
-   - todo 全量替换；turn_usage 汇总主/子模型用量，duration_ms 包含审批等待。
-   - 审批事件仅存内存：刷新可恢复，重启清空；工具结果仍落库。
-2. **读取与重跑**
-   - load_replay 按 anchor.turnId 分组，末条正文为最终回复；任务板、子助手卡片从工具记录恢复。
-   - load_history 重建模型 messages 和工具往返；压缩摘要存隐藏合成 user 消息，compaction.tail_start_id 标记已摘要边界消息。
-   - regenerate 保留最后用户消息，删除该轮旧回复/用量/摘要，恢复任务板后重跑；不撤销文件或命令操作。
-
-**不迁移 schema**：停后端 → 删除已确认的测试 app.db 及配套 -wal/-shm → 重启建表；不清工作区。
+| 表              | 保存内容                                                                |
+| -------------- | ------------------------------------------------------------------- |
+| session        | 项目、目录、标题、时间、归档标记                                                    |
+| message        | 用户/助手元信息；data 内 role、anchor.turnId、modelId、tokens、error；sequence 排序 |
+| part           | 正文、工具参数/状态/结果、压缩信息；归属 message                                       |
+| local\_setting | 项目权限模式与规则；scope/scope\_id/namespace/key 定位，value 存 JSON             |
+| todo           | 当前任务的内容、状态、顺序、时间                                                    |
+| turn\_usage    | turn 状态、起止时间、总耗时、输入/输出及缓存 token                                     |
 
 ### 2.2 model-io：模型调用快照
 
@@ -100,30 +86,15 @@ npm run dev
 | 目录/轮转    | MODELIO\_DIR可覆盖；MODELIO\_MAX\_MB默认10；追加前检查，超限以纳秒后缀归档     |
 | 用途/失败    | 调试审计，不参与回放；写失败吞异常、记WARNING，不阻断对话                         |
 
-- **含对话正文和工具参数，不入库、不外传。**
-- SQLite保存会话事实；model-io保存调用现场，两者不互相替代。
-- 摘要调用暂未写model-io，也未计入用量。
-
-### 2.3 其他运行文件
-
-| backend/data/下                               | 用途                           |
-| -------------------------------------------- | ---------------------------- |
-| workspace/、workspace/.rubbish/               | 工具工作区、delete\_file删除文件的可恢复副本 |
-| execution\_state.json、permission\_rules.json | 共享模式、allow/deny规则            |
-| logs/app.log                                 | 工程事件；纪律见RELIABILITY          |
 
 ## 3. 上下文压缩
 
-实现：agent/compact.py；恢复：sessions/replay.py。
+| 阶段           | 方法                                                   |
+| ------------ | ---------------------------------------------------- |
+| 触发           | 仅turn开始；历史token > 窗口 − 输出预留 − 安全buffer；默认预留32K + 13K |
+| microcompact | 直接将库内旧工具输出改为占位符；默认保留最近5条完整输出，重载历史后再判断预算              |
+| compact      | 仍超预算则LLM摘要此前历史；当前用户请求保留原文，不参与摘要                      |
 
-| 阶段           | 方法                                                                        |
-| ------------ | ------------------------------------------------------------------------- |
-| 触发           | 仅turn开始；历史token > 窗口 − 输出预留 − 安全buffer；默认预留32K + 13K                      |
-| microcompact | 直接将库内旧工具输出改为占位符；默认保留最近5条完整输出，重载历史后再判断预算                                   |
-| compact      | 仍超预算则LLM摘要此前历史；当前用户请求保留原文，不参与摘要                                           |
-| 摘要内容         | 任务、已完成、关键决定、文件、待办、失败教训、用户约束                                               |
-| 落盘/继续        | compaction事实保存summary\_text + before\_sequence；内存变为“摘要 + 当前请求”，后续仅加载边界后历史 |
-| 失败           | 摘要超时120s；连续失败3次后跳过摘要；计数在内存，重启清零                                           |
 
 # 初版最小harness实现 `scripts_mini_harness/mini_harness.py`
 
