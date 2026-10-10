@@ -44,7 +44,7 @@
     {
       "id": "BE-001",
       "name": "后端骨架+配置+DB",
-      "description": "backend 工程（uv + FastAPI + SQLAlchemy）：config(.env 全量可配)、SQLite 四表建库(WAL)、/api/health、obs.py 基础 logging(控制台+滚动文件)、首次启动全自动初始化目录",
+      "description": "backend 工程（uv + FastAPI + SQLAlchemy）：config(.env 全量可配)、SQLite 六表建库(WAL)、/api/health、obs.py 基础 logging(控制台+滚动文件)、首次启动全自动初始化目录",
       "status": "passing",
       "evidence": "uv run pytest 3 passed（health/四表建库/目录与日志初始化，tests/.tmp-data 自动清理）；uvicorn 真实启动 127.0.0.1:8100，curl /api/health 返回 {status:ok} 后关闭。默认端口改 8100（8000 被本机 Godot MCP 占用）",
       "testedAt": "2026-09-27"
@@ -52,10 +52,10 @@
     {
       "id": "BE-002",
       "name": "会话存储层",
-      "description": "ZCode最小四表：元信息message.data、内容part.data、轮次metadata.turnId、稳定sequence、会话事实upsert、回放与模型历史；本轮证据见storage_alignment_review",
+      "description": "ZCode 六表子集：session/message/part/local_setting/todo/turn_usage；anchor.turnId、稳定 sequence、工具状态、回放与压缩边界。",
       "status": "passing",
-      "evidence": "uv run pytest 13 passed：draft 幂等/sequence 首次分配后保留/工具 part 生命周期单行推进/软删过滤/回放按 turn 分组与末条 text 提升为 final_text/孤儿轮 stopped/审批留痕与未决恢复/load_history 含 tool_use+合成 tool_result 与 compact 边界；tmp-data 自动清理",
-      "testedAt": "2026-09-27"
+      "evidence": "pytest 121过；上游SQL列/约束对照通过；build通过，lint 0错误/3既有警告；真实前后端+假模型云浏览器验证任务板、审批刷新/允许/拒绝、子助手、错误重试、停止、重启恢复。",
+      "testedAt": "2026-10-10"
     },
     {
       "id": "BE-003",
@@ -237,5 +237,13 @@
     "scope": "仅local_setting permission存储，原四表/审批UI不变；AGENTS约束README人工维护",
     "evidence": "新增10例通过；全量115过/3既有平台失败。覆盖八字段/联合主键/索引、项目隔离、重启、upsert时间、并行追加、旧JSON不读取、规则判断。真实独立进程HTTP读取edit且会话列表200。",
     "boundaries": "旧JSON不迁移；默认build/空规则。未改四表、未新增会话授权或三选项；无真实模型调用，未做Windows/UI验收。"
+  },
+  "storage_subset_review": {
+    "date": "2026-10-10",
+    "reference": "ZCode 29628c9",
+    "status": "passing",
+    "scope": "必要六表子集；字段/JSON/语义对齐，替换 session_entry",
+    "evidence": "pytest 121过；上游SQL列/约束对照通过；build通过，lint 0错误/3既有警告；真实前后端+假模型云浏览器验证任务板、审批刷新/允许/拒绝、子助手、错误重试、停止、重启恢复。",
+    "boundaries": "不迁移旧库；审批内存事件重启清空；无真实模型调用。"
   }
 }

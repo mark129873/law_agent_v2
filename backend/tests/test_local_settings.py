@@ -12,7 +12,7 @@ from app.sessions import execution_state as state
 
 def test_zcode_local_setting_schema(store_db):
     schema = inspect(store_db.bind)
-    assert set(schema.get_table_names()) == {"session", "message", "part", "session_entry", "local_setting"}
+    assert set(schema.get_table_names()) == {"session", "message", "part", "todo", "turn_usage", "local_setting"}
     assert {c["name"] for c in schema.get_columns("local_setting")} == {
         "scope", "scope_id", "namespace", "key", "value", "schema_version", "time_created", "time_updated"}
     assert schema.get_pk_constraint("local_setting")["constrained_columns"] == ["scope", "scope_id", "namespace", "key"]
@@ -21,7 +21,7 @@ def test_zcode_local_setting_schema(store_db):
 
 def test_two_settings_and_upsert_keep_creation_time(tmp_data_dir):
     state.save_execution_state(tmp_data_dir, "edit")
-    state.save_permission_rules(tmp_data_dir, {"version": 1, "allow": [{"tool": "write_file"}]})
+    state.save_permission_rules(tmp_data_dir, {"version": 1, "allow": [{"toolName": "write_file"}]})
     with db.new_session() as session:
         row = session.get(LocalSetting, ("project", state.project_id(tmp_data_dir), "permission", "mode"))
         row.time_created = 123
@@ -38,7 +38,7 @@ def test_two_settings_and_upsert_keep_creation_time(tmp_data_dir):
 
 def test_project_scope_isolation(tmp_data_dir):
     state.save_execution_state(tmp_data_dir, "yolo", project_id="project-a")
-    state.save_permission_rules(tmp_data_dir, {"allow": [{"tool": "bash"}]}, project_id="project-a")
+    state.save_permission_rules(tmp_data_dir, {"allow": [{"toolName": "bash"}]}, project_id="project-a")
     assert state.load_execution_state(tmp_data_dir, project_id="project-a") == {"mode": "yolo"}
     assert state.load_execution_state(tmp_data_dir, project_id="project-b") == {"mode": "build"}
     assert state.load_permission_rules(tmp_data_dir, project_id="project-b")["allow"] == []
@@ -51,11 +51,11 @@ def test_modes_and_rules_survive_engine_restart(tmp_data_dir):
     state.add_permission_rule(tmp_data_dir, "allow", "bash", "echo:*")
     db.dispose_engine()
     assert state.load_execution_state(tmp_data_dir) == {"mode": "edit"}
-    assert state.load_permission_rules(tmp_data_dir)["allow"] == [{"tool": "bash", "content": "echo:*"}]
+    assert state.load_permission_rules(tmp_data_dir)["allow"] == [{"toolName": "bash", "ruleContent": "echo:*"}]
 
 
 def test_legacy_json_ignored_and_untouched(tmp_data_dir):
-    files = {"execution_state.json": '{"mode":"yolo"}', "permission_rules.json": '{"allow":[{"tool":"bash"}]}'}
+    files = {"execution_state.json": '{"mode":"yolo"}', "permission_rules.json": '{"allow":[{"toolName":"bash"}]}'}
     for name, content in files.items():
         (tmp_data_dir / name).write_text(content)
     assert state.load_execution_state(tmp_data_dir) == {"mode": "build"}
@@ -67,17 +67,17 @@ def test_legacy_json_ignored_and_untouched(tmp_data_dir):
 
 
 def test_rules_roundtrip_and_dedup(tmp_data_dir):
-    state.save_permission_rules(tmp_data_dir, {"allow": [], "deny": [{"tool": "bash", "content": "blocked"}], "ask": [{"tool": "read_file"}]})
+    state.save_permission_rules(tmp_data_dir, {"allow": [], "deny": [{"toolName": "bash", "content": "blocked"}], "ask": [{"toolName": "read_file"}]})
     state.add_permission_rule(tmp_data_dir, "allow", "bash", "echo:*")
     state.add_permission_rule(tmp_data_dir, "allow", "bash", "echo:*")
     rules = state.load_permission_rules(tmp_data_dir)
     assert len(rules["allow"]) == 1
-    assert rules["ask"] == [{"tool": "read_file"}]
-    assert rules["deny"] == [{"tool": "bash", "content": "blocked"}]
+    assert rules["ask"] == [{"toolName": "read_file"}]
+    assert rules["deny"] == [{"toolName": "bash", "content": "blocked"}]
 
 
 def test_evaluate_reads_sqlite_rules_and_hard_deny(tmp_data_dir):
-    state.save_permission_rules(tmp_data_dir, {"allow": [{"tool": "write_file"}], "deny": [{"tool": "read_file"}]})
+    state.save_permission_rules(tmp_data_dir, {"allow": [{"toolName": "write_file"}], "deny": [{"toolName": "read_file"}]})
     assert evaluate(tmp_data_dir, "write_file", {"path": "a.txt"})["decision"] == "allow"
     assert evaluate(tmp_data_dir, "read_file", {"path": "a.txt"})["decision"] == "deny"
     state.save_execution_state(tmp_data_dir, "yolo")

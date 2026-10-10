@@ -1,3 +1,4 @@
+from storage_seed import seed_record
 """BE-6 验证：交互审批（仲裁注册表 / InteractiveApprover 全流程 / 端点 / 工时记账）。"""
 
 import asyncio
@@ -49,9 +50,9 @@ def test_interactive_approver_full_flow(store_db) -> None:
         assert "删除类命令" in (outcome["denial_reason"] or "")
 
         # 两条事实留痕：requested + denied
-        entries = store.list_entries(store_db, "s1", "approval")
-        statuses = [store.entry_data(e)["status"] for e in entries]
-        assert statuses == ["requested", "denied"]
+        entries = approvals.approval_events("s1")
+        statuses = [e["status"] for e in entries]
+        assert statuses == ["denied"]
 
     asyncio.run(scenario())
 
@@ -71,8 +72,8 @@ def test_interactive_approver_approved(store_db) -> None:
         outcome = await asyncio.wait_for(wait_task, timeout=5)
         assert outcome["approved"] is True
 
-        entries = store.list_entries(store_db, "s1", "approval")
-        assert store.entry_data(entries[-1])["status"] == "approved"
+        entries = approvals.approval_events("s1")
+        assert entries[-1]["status"] == "approved"
 
     asyncio.run(scenario())
 
@@ -93,8 +94,8 @@ def test_approval_endpoint(client, store_db) -> None:
     assert slot["approved"] is True and slot["event"].is_set()
 
 
-def test_active_ms_excludes_approval_wait(store_db, tmp_data_dir) -> None:
-    """工时记账：审批等待段不计入 active_ms（pause/resume 由循环调用）。"""
+def test_duration_includes_approval_wait(store_db, tmp_data_dir) -> None:
+    """工时记账：总耗时包含审批等待段。"""
     import time
 
     from app import db
@@ -103,19 +104,17 @@ def test_active_ms_excludes_approval_wait(store_db, tmp_data_dir) -> None:
     recorder = _recorder(store_db)
     recorder.begin_turn("测工时")
 
-    recorder.pause_active()
     time.sleep(0.12)  # 模拟用户思考要不要批准
-    recorder.resume_active()
     fact = recorder.end_turn("success")
 
-    assert fact["active_ms"] < 120  # 等待段被剔除（否则 active_ms ≈ 120+）
+    assert fact["active_ms"] >= 120  # 等待段计入总耗时
     assert fact["state"] == "success"
 
 
 def test_pending_approval_survives_in_replay(store_db) -> None:
     """刷新恢复：未决审批在回放中出现，前端可凭 request_id 提交决定。"""
     store.ensure_session(store_db, "s1", "test-model", "删文件")
-    store.put_entry(store_db, "s1", "approval", {
+    seed_record(store_db, "s1", "approval", {
         "turn_id": "t1", "request_id": "r-refresh", "tool": "bash",
         "input": {"command": "del a.txt"}, "reason": "删除类命令",
         "status": "requested", "time": 1.0,
@@ -185,7 +184,7 @@ def test_allow_always_saves_rule(client) -> None:
     assert resp.json() == {"ok": True}
     assert slot["approved"] is True
     rules = execution_state.load_permission_rules(settings.data_dir)
-    assert {"tool": "bash", "content": "echo:*"} in rules["allow"]
+    assert {"toolName": "bash", "ruleContent": "echo:*"} in rules["allow"]
 
 
 def test_full_access_switches_yolo(client) -> None:

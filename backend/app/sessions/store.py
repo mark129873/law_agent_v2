@@ -14,7 +14,7 @@ import json
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app.models import Message, Part, Session, SessionEntry, new_id, now_ms
+from app.models import Message, Part, Session, Todo, TurnUsage, new_id, now_ms
 
 
 def _dump(data: dict) -> str:
@@ -43,7 +43,7 @@ def _next_sequence(db: DbSession, model, session_id: str) -> int:
     current = db.execute(
         select(func.max(model.sequence)).where(model.session_id == session_id)
     ).scalar()
-    return (current or 0) + 1
+    return (current if current is not None else -1) + 1
 
 
 def ensure_session(
@@ -57,7 +57,10 @@ def ensure_session(
     row = db.get(Session, session_id)
     if row is not None:
         return row
+    from app.config import settings
+    from app.sessions.execution_state import project_id, project_directory
     row = Session(
+        project_id=project_id(settings.data_dir), directory=project_directory(settings.data_dir),
         id=session_id,
         title=(first_user_text or "新会话").replace("\n", " ")[:30],
         time_created=now_ms(),
@@ -65,7 +68,7 @@ def ensure_session(
     )
     db.add(row)
     db.flush()
-    put_entry(db, session_id, "context", {"model": model})
+    db.commit()
     return row
 
 
@@ -89,7 +92,7 @@ def list_sessions(db: DbSession, limit: int = 200) -> list[Session]:
 
 
 def soft_delete_session(db: DbSession, session_id: str) -> bool:
-    """软删除：置 deleted_at。用户视角是永久删除（无归档），库里保留行。
+    """软删除：置 time_archived。用户视角是永久删除（无归档），库里保留行。
 
     返回是否真的删了（不存在或已删返回 False）。
     """
@@ -103,7 +106,7 @@ def soft_delete_session(db: DbSession, session_id: str) -> bool:
 
 def turn_id(row) -> str:
     """读取 JSON 轮次标签；无旧列回退，因为本次只支持空库。"""
-    return _load(row.data).get("metadata", {}).get("turnId", "")
+    return _load(row.data).get("anchor", {}).get("turnId", "")
 
 
 def message_role(row: Message) -> str:
@@ -121,7 +124,8 @@ def part_data(row: Part) -> dict:
     """工具存储与 API 形状解耦；调用者拿到的对象修改后仍需显式保存。"""
     data = _load(row.data)
     if data.get("type") == "tool":
-        return {**data.get("state", {}), "name": data.get("tool", ""),
+        state = data.get("state", {})
+        return {**state, "output": state.get("output", state.get("error", "")), "name": data.get("tool", ""),
                 "tool_call_id": data.get("callID", row.id)}
     return data
 
@@ -130,26 +134,30 @@ def _tag(data: dict, label: str) -> dict:
     """保留其他元信息，仅规范化当前轮次标签。"""
     result = dict(data)
     result.pop("turn_id", None)
-    result["metadata"] = {**result.get("metadata", {}), "turnId": label}
+    result["anchor"] = {**result.get("anchor", {}), "turnId": label}
     return result
 
 
 def upsert_message(db: DbSession, session_id: str, message_id: str,
                    role: str, data: dict, turn_id: str, *, commit: bool = True) -> Message:
-    """只写元信息；同 ID 更新不允许改变会话归属或顺序。"""
+    """只写元信息；同会话更新保留顺序，改归属时重新分配序号。"""
     if "text" in data:
         raise ValueError("正文必须通过 text part 保存")
     payload = _tag({**data, "role": role}, turn_id)
+    payload.setdefault("time", {"created": now_ms()})
     row = db.get(Message, message_id)
     if row is None:
         row = Message(id=message_id, session_id=session_id,
-                      sequence=_next_sequence(db, Message, session_id), data=_dump(payload))
+                      sequence=_next_sequence(db, Message, session_id), data=_dump(payload),
+                      time_created=payload["time"]["created"])
         db.add(row)
     else:
         if row.session_id != session_id:
-            raise ValueError("消息 ID 已属于其他会话")
+            row.sequence = _next_sequence(db, Message, session_id)
+            row.session_id = session_id
+        payload["time"]["created"] = row.time_created
         row.data = _dump(payload)
-    row.time_updated = now_ms()
+    row.time_updated = payload["time"].get("completed", now_ms()) if role == "assistant" else row.time_created
     touch_session(db, session_id)
     db.flush()
     if commit:
@@ -163,23 +171,41 @@ def upsert_part(db: DbSession, session_id: str, message_id: str, part_id: str,
     parent = db.get(Message, message_id)
     if parent is None or parent.session_id != session_id:
         raise ValueError("部件所属消息不存在或不属于该会话")
-    if turn_id and _load(parent.data).get("metadata", {}).get("turnId", "") != turn_id:
+    if turn_id and _load(parent.data).get("anchor", {}).get("turnId", "") != turn_id:
         raise ValueError("部件轮次与所属消息不一致")
     if kind == "tool_call":
-        state = {k: v for k, v in data.items() if k not in ("name", "tool_call_id", "type")}
+        old = db.get(Part, part_id)
+        old_state = _load(old.data).get("state", {}) if old else {}
+        status = data.get("status", "pending")
+        status = "error" if status in ("failed", "denied") else status
+        state = {"status": status, "input": data.get("input") or {}}
+        if status == "pending":
+            state["raw"] = _dump(state["input"])
+        else:
+            state["time"] = {"start": old_state.get("time", {}).get("start", now_ms())}
+            if status in ("completed", "error"):
+                state["time"]["end"] = now_ms()
+                if status == "error":
+                    state["error"] = data.get("error", data.get("output", "")) or ""
+                else:
+                    state.update(output=data.get("output") or "", title=data.get("name", ""), metadata={})
         payload = {"type": "tool", "callID": data.get("tool_call_id", part_id),
                    "tool": data.get("name", ""), "state": state}
     else:
+        if kind not in ("text", "compaction", "timeline"):
+            raise ValueError(f"未实现的 ZCode 部件类型：{kind}")
         payload = {**data, "type": kind}
     row = db.get(Part, part_id)
     if row is None:
         current = db.execute(select(func.max(Part.sequence)).where(Part.message_id == message_id)).scalar()
         row = Part(id=part_id, message_id=message_id, session_id=session_id,
-                   sequence=(current or 0) + 1, data=_dump(payload))
+                   sequence=(current if current is not None else -1) + 1, data=_dump(payload))
         db.add(row)
     else:
         if row.message_id != message_id or row.session_id != session_id:
-            raise ValueError("部件 ID 已属于其他消息")
+            current = db.scalar(select(func.max(Part.sequence)).where(Part.message_id == message_id))
+            row.sequence = (current if current is not None else -1) + 1
+            row.message_id, row.session_id = message_id, session_id
         row.data = _dump(payload)
     row.time_updated = now_ms()
     touch_session(db, session_id)
@@ -193,7 +219,7 @@ def save_user_message(db: DbSession, session_id: str, message_id: str,
                       text: str, turn_id: str, model: str = "") -> Message:
     """用户元信息与正文原子提交，避免中断留下没有正文的用户消息。"""
     try:
-        row = upsert_message(db, session_id, message_id, "user", {"modelId": model}, turn_id, commit=False)
+        row = upsert_message(db, session_id, message_id, "user", {}, turn_id, commit=False)
         # 固定部件 ID 让同一输入的重试幂等；普通助手正文使用独立随机 ID。
         upsert_part(db, session_id, message_id, message_id, "text", {"text": text}, turn_id, commit=False)
         db.commit()
@@ -203,32 +229,11 @@ def save_user_message(db: DbSession, session_id: str, message_id: str,
         raise
 
 
-def put_entry(db: DbSession, session_id: str, entry_type: str, data: dict,
-              turn_id: str = "", *, entry_id: str | None = None,
-              touch: bool = True) -> SessionEntry:
-    """省略 ID 时追加审计记录；指定同 ID 时更新，保留创建时间。"""
-    label = turn_id or data.get("turn_id", "") or data.get("metadata", {}).get("turnId", "")
-    payload = _tag(data, label) if label else dict(data)
-    row = db.get(SessionEntry, entry_id) if entry_id else None
-    if row is None:
-        row = SessionEntry(id=entry_id or new_id(), session_id=session_id,
-                           type=entry_type, data=_dump(payload))
-        db.add(row)
-    else:
-        if row.session_id != session_id:
-            raise ValueError("会话记录 ID 已属于其他会话")
-        row.type, row.data = entry_type, _dump(payload)
-    row.time_updated = now_ms()
-    if touch:
-        touch_session(db, session_id)
-    db.commit()
-    return row
-
-
 def find_last_user_message(db: DbSession, session_id: str) -> Message | None:
     """用户角色从 JSON 查询，仍按稳定 sequence 选择重跑锚点。"""
     return db.execute(select(Message).where(
-        Message.session_id == session_id, func.json_extract(Message.data, "$.role") == "user"
+        Message.session_id == session_id, func.json_extract(Message.data, "$.role") == "user",
+        func.coalesce(func.json_extract(Message.data, "$.synthetic"), 0) == 0
     ).order_by(Message.sequence.desc()).limit(1)).scalar()
 
 
@@ -239,10 +244,26 @@ def rollback_turn(db: DbSession, session_id: str, turn_id: str, from_sequence: i
         func.json_extract(Message.data, "$.role") == "assistant",
         Message.sequence >= from_sequence,
     ))
-    db.execute(delete(SessionEntry).where(
-        SessionEntry.session_id == session_id,
-        func.json_extract(SessionEntry.data, "$.metadata.turnId") == turn_id,
+    db.execute(delete(Message).where(
+        Message.session_id == session_id,
+        func.json_extract(Message.data, "$.synthetic") == 1,
+        func.json_extract(Message.data, "$.anchor.turnId") == turn_id,
     ))
+    db.execute(delete(TurnUsage).where(TurnUsage.session_id == session_id, TurnUsage.turn_id == turn_id))
+    from app.sessions.approvals import forget_turn
+    forget_turn(session_id, turn_id)
+    # 重跑恢复先前任务板：从仍保留的成功工具输入重建，不保留已删轮次副作用。
+    rows = db.scalars(select(Part).join(Message, Part.message_id == Message.id).where(
+        Part.session_id == session_id).order_by(Message.sequence, Part.sequence)).all()
+    items = []
+    for part in rows:
+        data = part_data(part)
+        if data.get("name") == "todo_write" and data.get("status") == "completed":
+            from app.agent.todo import parse_items
+            parsed, error = parse_items(data.get("input", {}).get("items"))
+            if not error:
+                items = parsed
+    replace_todos(db, session_id, items, commit=False)
     db.commit()
     return result.rowcount or 0
 
@@ -254,33 +275,66 @@ def retag_message(db: DbSession, row: Message, label: str) -> None:
     db.commit()
 
 
-def list_entries(db: DbSession, session_id: str, entry_type: str | None = None) -> list[SessionEntry]:
-    """时间相同时按 SQLite rowid 稳定排序，审批最新状态不会随机翻转。"""
-    from sqlalchemy import literal_column
-    stmt = select(SessionEntry).where(SessionEntry.session_id == session_id)
-    if entry_type is not None:
-        stmt = stmt.where(SessionEntry.type == entry_type)
-    return list(db.execute(stmt.order_by(SessionEntry.time_created, literal_column("session_entry.rowid"))).scalars())
+def list_turns(db: DbSession, session_id: str) -> list[TurnUsage]:
+    """轮次统计与消息内容分开读取。"""
+    return list(db.scalars(select(TurnUsage).where(TurnUsage.session_id == session_id).order_by(TurnUsage.started_at)))
 
 
-def entry_data(entry: SessionEntry) -> dict:
-    """投影为现有回放协议；数据库仅保存 metadata.turnId。"""
-    data = _load(entry.data)
-    if turn_id(entry):
-        data["turn_id"] = turn_id(entry)
-    return data
+def turn_fact(row: TurnUsage) -> dict:
+    """仅 API 投影保留前端命名，数据库不保存别名字段。"""
+    return {"turn_id": row.turn_id, "state": {"completed": "success", "error": "failed", "cancelled": "stopped"}.get(row.status, row.status),
+            "started_at": row.started_at, "ended_at": row.completed_at, "active_ms": row.duration_ms,
+            "tokens_used": row.output_tokens, "input_tokens": row.input_tokens,
+            "cache_read_tokens": row.cache_read_input_tokens, "cache_creation_tokens": row.cache_creation_input_tokens}
+
+
+def read_todos(db: DbSession, session_id: str) -> list[dict]:
+    return [{"content": r.content, "status": r.status} for r in db.scalars(
+        select(Todo).where(Todo.session_id == session_id).order_by(Todo.position))]
+
+
+def replace_todos(db: DbSession, session_id: str, items: list[dict], *, commit=True) -> None:
+    """同一事务全量替换，与 ZCode 按 position 保存当前任务板一致。"""
+    try:
+        db.execute(delete(Todo).where(Todo.session_id == session_id))
+        now = now_ms()
+        db.add_all([Todo(session_id=session_id, position=i, content=t["content"], status=t["status"],
+                         time_created=now, time_updated=now) for i, t in enumerate(items)])
+        touch_session(db, session_id)
+        if commit:
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def session_info(db: DbSession, row: Session) -> dict:
-    """会话展示字段从事实投影；回滚后自然排除已删除轮次的用量。"""
-    info = {"id": row.id, "title": row.title, "model": "",
+    """当前模型只是末条实际助手消息的来源，不控制下一次调用。"""
+    messages = db.scalars(select(Message).where(Message.session_id == row.id).order_by(Message.sequence)).all()
+    model = next((_load(m.data).get("modelId", "") for m in reversed(messages)
+                  if message_role(m) == "assistant" and _load(m.data).get("modelId")), "")
+    turns = list_turns(db, row.id)
+    return {"id": row.id, "title": row.title, "model": model,
             "created_at": row.time_created, "updated_at": row.time_updated,
-            "tokens_used": 0, "input_tokens": 0}
-    for entry in list_entries(db, row.id):
-        data = entry_data(entry)
-        if entry.type == "context":
-            info["model"] = data.get("model", info["model"])
-        elif entry.type == "turn":
-            info["tokens_used"] += int(data.get("tokens_used", 0))
-            info["input_tokens"] += int(data.get("input_tokens", 0))
-    return info
+            "tokens_used": sum(t.output_tokens for t in turns), "input_tokens": sum(t.input_tokens for t in turns)}
+
+
+def save_compaction(db, session_id, label, before_sequence, summary, tokens_before, tokens_after):
+    """摘要是隐藏的合成用户消息；边界存消息 ID，不把 sequence 冒充 ID。"""
+    boundary = db.scalar(select(Message).where(Message.session_id == session_id,
+        Message.sequence <= before_sequence).order_by(Message.sequence.desc()).limit(1))
+    mid = new_id()
+    try:
+        upsert_message(db, session_id, mid, "user", {
+            "synthetic": True, "summary": {"title": "Compact summary", "body": summary},
+            "semantics": {"origin": "agent_runtime", "kind": "compact_summary", "uiVisibility": "hidden",
+                          "providerVisibility": "visible", "transcriptVisibility": "hidden"}}, label, commit=False)
+        upsert_part(db, session_id, mid, new_id(), "text", {"text": summary, "synthetic": True}, label, commit=False)
+        upsert_part(db, session_id, mid, new_id(), "compaction", {
+            "auto": True, "tail_start_id": boundary.id if boundary else None,
+            "preCompactTokenCount": tokens_before, "postCompactTokenCount": tokens_after}, label, commit=False)
+        db.commit()
+        return mid
+    except Exception:
+        db.rollback()
+        raise

@@ -66,8 +66,8 @@ def test_regenerate_full_flow(client) -> None:
 
     # 旧 turn 事实已清除（turn 事实只剩新轮的）
     with db.new_session() as d:
-        facts = store.list_entries(d, sid, "turn")
-    assert [store.entry_data(f)["turn_id"] for f in facts] == [new_turn["turn_id"]]
+        facts = store.list_turns(d, sid)
+    assert [store.turn_fact(f)["turn_id"] for f in facts] == [new_turn["turn_id"]]
 
 
 def test_regenerate_requires_existing_turn(client) -> None:

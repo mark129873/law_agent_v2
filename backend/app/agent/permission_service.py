@@ -143,9 +143,9 @@ def match_rule(rules: dict, behavior: str, tool_name: str, tool_input: dict) -> 
     """在指定行为桶（allow/deny/ask）里找第一条命中规则。"""
     subject = _subject(tool_input)
     for rule in rules.get(behavior, []):
-        if rule.get("tool") != tool_name:
+        if rule.get("toolName") != tool_name:
             continue
-        content = rule.get("content")
+        content = rule.get("ruleContent")
         if not content or _match_content(content, subject):
             return rule
     return None
@@ -165,8 +165,8 @@ def derive_rule(tool_name: str, tool_input: dict) -> dict | None:
         return None
     root = subject.split()[0].lower()
     if root in _HIGH_RISK_ROOTS:
-        return {"tool": tool_name, "content": subject}
-    return {"tool": tool_name, "content": root + ":*"}
+        return {"toolName": tool_name, "ruleContent": subject}
+    return {"toolName": tool_name, "ruleContent": root + ":*"}
 
 
 # ---------- 评估 ----------
@@ -201,7 +201,7 @@ def check_permission(
     # 2) deny 规则
     rule = match_rule(rules, "deny", tool_name, tool_input)
     if rule:
-        return _deny("rule.deny", f"命中拒绝规则：{rule.get('content') or rule.get('tool')}")
+        return _deny("rule.deny", f"命中拒绝规则：{rule.get('ruleContent') or rule.get('toolName')}")
 
     # 3) ask 规则
     rule = match_rule(rules, "ask", tool_name, tool_input)
@@ -211,7 +211,7 @@ def check_permission(
     # 4) allow 规则
     rule = match_rule(rules, "allow", tool_name, tool_input)
     if rule:
-        return _allow("rule.allow", f"命中允许规则：{rule.get('content') or rule.get('tool')}")
+        return _allow("rule.allow", f"命中允许规则：{rule.get('ruleContent') or rule.get('toolName')}")
 
     # 5) edit 检查：文件编辑类 + workspace 范围免确认，其余落 build
     if mode == "edit":

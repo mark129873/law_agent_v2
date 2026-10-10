@@ -1,10 +1,11 @@
+from storage_seed import seed_record
 """ZCode 对齐回归：真实 SQLite 空库，不连接模型或外部服务。"""
 import json
 
 import pytest
 from sqlalchemy import inspect, select
 
-from app.models import Message, Part, Session, SessionEntry
+from app.models import Message, Part, Session, TurnUsage
 from app.sessions import replay, store
 from app.sessions.recorder import TurnRecorder
 
@@ -18,10 +19,10 @@ def seed(d):
 def test_exact_minimal_columns(store_db):
     """实际数据库没有旧 role/kind/turn_id 列，列集合对应 ZCode 子集。"""
     expected = {
-        "session": {"id", "title", "time_created", "time_updated", "time_archived"},
+        "session": {"id", "project_id", "directory", "title", "time_created", "time_updated", "time_archived"},
         "message": {"id", "session_id", "sequence", "time_created", "time_updated", "data"},
         "part": {"id", "session_id", "message_id", "sequence", "time_created", "time_updated", "data"},
-        "session_entry": {"id", "session_id", "type", "time_created", "time_updated", "data"},
+
     }
     schema = inspect(store_db.bind)
     for table, columns in expected.items():
@@ -72,44 +73,34 @@ def test_message_rejects_body(store_db):
         store.upsert_message(store_db, "s", "a", "assistant", {"text": "不能重复保存"}, "t")
 
 
-def test_cross_scope_write_rejected(store_db):
+def test_cross_scope_upsert_reassigns_sequence(store_db):
+    """ZCode 同 ID 跨 scope 更新会改绑并分配新 scope 顺序。"""
     seed(store_db)
-    store.ensure_session(store_db, "other", "m", "另一个")
-    with pytest.raises(ValueError, match="其他会话"):
-        store.upsert_message(store_db, "other", "u", "user", {}, "t")
-    with pytest.raises(ValueError, match="不属于"):
-        store.upsert_part(store_db, "other", "u", "p", "text", {"text": "x"})
-    store.upsert_message(store_db, "s", "a", "assistant", {}, "t")
-    with pytest.raises(ValueError, match="其他消息"):
-        store.upsert_part(store_db, "s", "a", "u", "text", {"text": "x"})
+    store.ensure_session(store_db, 'other', 'm', '另一个')
+    row = store.upsert_message(store_db, 'other', 'u', 'user', {}, 't')
+    assert row.session_id == 'other' and row.sequence == 0
+    with pytest.raises(ValueError, match='不属于'):
+        store.upsert_part(store_db, 's', 'u', 'p', 'text', {'text': 'x'})
 
 
-def test_entry_upsert_and_activity_time(store_db):
+def test_anchor_and_model_source(store_db):
     seed(store_db)
-    session = store_db.get(Session, "s")
-    previous = session.time_updated
-    first = store.put_entry(store_db, "s", "context", {"model": "m1"}, "t", entry_id="config", touch=False)
-    created = first.time_created
-    again = store.put_entry(store_db, "s", "context", {"model": "m2"}, "t", entry_id="config", touch=False)
-    assert again.time_created == created
-    assert again.time_updated >= created
-    assert session.time_updated == previous
-    assert json.loads(again.data) == {"model": "m2", "metadata": {"turnId": "t"}}
-    assert store.session_info(store_db, session)["model"] == "m2"
-    assert len(list(store_db.scalars(select(SessionEntry).where(SessionEntry.id == "config")))) == 1
+    row = store.upsert_message(store_db, 's', 'a', 'assistant', {'modelId': 'm'}, 't')
+    assert json.loads(row.data)['anchor']['turnId'] == 't'
+    assert 'metadata' not in json.loads(row.data)
+    assert store.session_info(store_db, store_db.get(Session, 's'))['model'] == 'm'
 
 
 def test_regenerate_keeps_user_part_and_removes_turn_facts(store_db):
     seed(store_db)
     store.upsert_message(store_db, "s", "a", "assistant", {}, "t")
     store.upsert_part(store_db, "s", "a", "answer", "text", {"text": "旧答案"}, "t")
-    for kind in ("turn", "approval", "compaction", "context"):
-        store.put_entry(store_db, "s", kind, {"tokens_used": 5}, "t")
+    seed_record(store_db, "s", "turn", {"tokens_used": 5}, "t")
     store.rollback_turn(store_db, "s", "t", 1)
     store.retag_message(store_db, store_db.get(Message, "u"), "new")
     assert store_db.get(Part, "answer") is None
     assert store_db.get(Part, "u") is not None
-    assert all(store.turn_id(e) != "t" for e in store.list_entries(store_db, "s"))
+    assert all(e.turn_id != "t" for e in store.list_turns(store_db, "s"))
     result = replay.load_replay(store_db, "s")
     assert len(result["turns"]) == 1
     assert result["turns"][0]["turn_id"] == "new"

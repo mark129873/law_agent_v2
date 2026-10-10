@@ -21,7 +21,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
        │       └─ modelio（调用快照）
        ├─ authorize_tool ── permission_service / approvals
        ├─ tools / todo / subtask
-       └─ TurnRecorder ── store ── SQLite 四表
+       └─ TurnRecorder ── store ── SQLite 六表
                                       │
                                replay ├─ 界面回放
                                       └─ 模型 messages
@@ -37,7 +37,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 | 模型适配 | SDK流转换为text_delta/tool_use/usage；聚合响应并记调用快照 | [llm.py](../backend/app/agent/llm.py)、[model_call.py](../backend/app/agent/model_call.py) |
 | 工具与扩展 | schema、同步工具分发、任务板、子助手、技能、hooks | [tools.py](../backend/app/agent/tools.py)、[todo.py](../backend/app/agent/todo.py)、[subtask.py](../backend/app/agent/subtask.py) |
 | 权限与审批 | 策略判定；挂起、接收决定、回填拒绝理由 | [permission_service.py](../backend/app/agent/permission_service.py)、[approvals.py](../backend/app/sessions/approvals.py) |
-| 记录器 | 将执行里程碑转换成消息/部件/事实，累计用量与有效工时 | [recorder.py](../backend/app/sessions/recorder.py)：TurnRecorder |
+| 记录器 | 将执行里程碑转换成消息/部件/事实，累计用量与总耗时 | [recorder.py](../backend/app/sessions/recorder.py)：TurnRecorder |
 | 存储 | ORM写入、稳定顺序、归属校验、回滚、会话信息投影 | [store.py](../backend/app/sessions/store.py) |
 | 读取投影 | 相同存储分别组装界面回放与模型上下文 | [replay.py](../backend/app/sessions/replay.py)：load_replay、load_history |
 
@@ -53,7 +53,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 2. `POST /api/sessions/{id}/turn` 校验模型配置和同会话运行态；提交的模式保存到共享执行状态。
 3. 创建独立数据库Session、TurnRecorder与停止信号；`load_history`重建此前模型历史，追加当前用户输入。
 4. `_turn_sse_response`装配TurnDeps，创建后台pump和Queue；审批与主循环共用该Queue。
-5. `begin_turn`保存用户message/text part、context记录，发出turn_started。
+5. `begin_turn`保存用户message/text part、turn_usage 运行记录，发出turn_started。
 
 ### 3.2 模型与工具循环
 
@@ -74,33 +74,34 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 | 分支 | 调用方式 | 原因 |
 | --- | --- | --- |
 | 普通工具 | asyncio.to_thread(execute_tool, name, input) | 同步文件/命令操作移出事件循环线程 |
-| todo_write | await handle_todo_write(deps, message_id, input) | 校验整板、经recorder写todo part、返回面板文本和todo_updated事件 |
+| todo_write | await handle_todo_write(deps, message_id, input) | 校验整板、经recorder写 todo 表、返回面板文本和todo_updated事件 |
 | subtask | async for run_subtask_events(...) | 独立模型历史与循环；事件进入父队列，汇总文本作为父工具结果 |
 
-- 工具状态按同一part推进：pending→running→completed/failed；权限拒绝直接denied。
-- todo为全量快照，最多20项、最多1项in_progress；没有独立任务表或自动调度器。
+- 工具状态按同一part推进：pending→running→completed/error；失败与拒绝均保存 error，原因存 state.error。
+- todo为全量快照，最多20项、最多1项in_progress；todo 表保存当前列表，无自动调度器。
 - 子助手仅7个同步工具，不含todo/subtask；权限沿用父级，实时审批不提供fullAccess。
-- 子助手内部对话不写独立message序列，只保存subtask卡片及父工具输出；模型调用另写带subtask_id的model-io。
+- 子助手内部对话不写独立message序列，只保存父工具结果，子助手卡片由其投影；模型调用另写带subtask_id的model-io。
 
 ## 4. 数据与状态归属
 
 ### 4.1 会话模型
 
-```text
-session
- ├─ message（会话内sequence；data.metadata.turnId标记轮次）
- │    └─ part（消息内sequence；正文、工具、任务板等内容）
- └─ session_entry（轮次结果、审批、压缩、模型配置快照）
-```
+| 表 | 内容 |
+| --- | --- |
+| session | 会话、项目 ID、目录、标题和时间 |
+| message | role、modelId、parentID、time、tokens、error、anchor.turnId |
+| part | text/tool/compaction；消息内稳定排序 |
+| todo | 当前任务列表，事务全量替换 |
+| turn_usage | 状态、起止时间、总耗时、累计用量 |
+| local_setting | 项目权限模式与规则 |
 
-- session是侧栏会话；turn是一次用户请求及其后续执行，不是独立表。
-- 一次turn含一条用户message和零到多条assistant message；每次主模型调用创建一条assistant message。
-- message保存role/modelId/parentID/metadata.turnId；用户和助手正文均只存text part。
-- part通过message_id关联消息；同时存session_id便于会话查询。tool使用callID、tool、state，todo/error为本项目扩展。
-- session_entry按type区分turn/approval/compaction/context，轮次标签也在data.metadata.turnId；支持同ID更新，审批请求/决定仍分别追加。
-- sequence首次创建时分配，更新不变；同ID跨会话或跨消息写入拒绝。
-- session只存身份、标题和时间；模型从context记录读取，用量从turn事实聚合。
-- 结构定义见[models.py](../backend/app/models.py)；不迁移旧schema，数据库处理纪律见RELIABILITY。
+- 对齐 ZCode `29628c9` 必要子集；字段清单见 [storage-subset.md](storage-subset.md)。
+  - message/part 的 sequence 从 0 开始；同 scope 更新保留顺序，跨 scope 更新重新分配。
+  - NULL sequence 由上游同款触发器补齐；part.session_id 不额外添加外键。
+- turn 是执行轮次，message.data.anchor.turnId 关联；每轮可有多个助手消息。
+  - 正文只在 text part；模型异常在 message.error；工具失败在 state.error。
+  - 不保留 session_entry、tool_usage、model_usage；不新增会话模型选择。
+- 不迁移测试旧库；重建仅处理数据库，保留工作区。
 
 ### 4.2 状态存放位置
 
@@ -117,10 +118,10 @@ session
 ### 4.3 写入时机与用量
 
 - 用户message与text part同事务保存；助手正文按模型步保存，非逐token提交。
-- 工具运行/结束更新同一part；todo每次写快照；subtask收口更新卡片。
-- turn收口保存状态、起止时间、active_ms和用量；active_ms扣除审批等待。
+- 工具运行/结束更新同一 part；todo 全量替换；子助手和任务卡片从工具记录投影。
+- turn_usage 保存 running/completed/error/cancelled；duration_ms 包含审批等待。API 的 active_ms 仅为显示兼容别名。
 - tokens_used为输出累计，input_tokens为输入累计；缓存读写独立记录。主/子调用均计入父turn。
-- context_tokens取recorder最近一次调用input；主循环压缩判断另用deps.last_input_tokens，二者不是同一变量。
+- 上下文占用取最近主模型 message.tokens.input；子模型只计入轮次累计，不覆盖主上下文。
 - SQLite开启WAL、外键及5秒busy_timeout；它保存执行事实，但不是不可变事件库：工具更新、重跑及microcompact都会改动记录。
 
 ## 5. 历史投影与上下文
@@ -139,7 +140,7 @@ session
 
 1. 仅turn开始检查预算：窗口−输出预留−安全buffer，默认预留32K+13K。
 2. microcompact将较旧的完成/失败工具输出改成占位符，默认保留最近5条；随后重载历史。
-3. 仍超预算则摘要此前历史，保留当前用户请求原文；compaction记录summary_text和before_sequence。
+3. 仍超预算则摘要此前历史，保留当前用户请求原文；合成 user message/text 保存摘要，compaction.tail_start_id 保存最后被摘要的消息 ID。
 4. 本轮内存变为“摘要+当前请求”；下次load_history读取摘要及边界后的消息。
 
 - 摘要不会删除旧消息；microcompact会覆盖旧工具输出，没有额外归档副本。
@@ -161,13 +162,13 @@ session
 ### 权限与审批
 
 - local_setting 与 ZCode 对齐八字段：scope、scope_id、namespace、key、value、schema_version、time_created、time_updated；前四项联合主键。
-- scope=project、namespace=permission；mode/ruleset 分行，value 为 JSON，schema_version=1。scope_id 为规范工作区路径的稳定 SHA-256 标识，不是会话 ID。
-- 本轮仅新增配置表，不改四张会话表、不新增多项目界面；原审批选项保持。旧权限 JSON 不迁移、不读取，保留原文件。
+- scope=project、namespace=permission；mode/ruleset 分行，value 为 JSON，schema_version=1。scope_id 采用 ZCode 目录 slug：小写、非字母数字及 ._- 转连字符、去首尾连字符、最多80字符。与 session.project_id 一致。
+- 规则使用 toolName/ruleContent；无多项目界面。旧权限 JSON 不读取、不迁移。
 
 - evaluate读取共享模式/规则，返回allow/deny/ask。
 - 判定顺序：硬拒→yolo→deny规则→ask规则→allow规则→edit/build默认策略；yolo跳过普通规则，但不跳过硬拒。
-- ask时保存审批请求，发approval_request，等待进程内Event；POST approval唤醒后保存决定并发approval_resolved。
-- 批准后执行工具；拒绝理由作为Error工具结果回填；审批等待暂停工时累计。
+- ask 时先注册进程内槽位，再发 approval_request；决定更新内存事件并发 approval_resolved。刷新保留选项，重启不恢复审批历史。
+- 批准后执行工具；拒绝理由作为Error工具结果回填；审批等待计入总耗时。
 - 普通文件工具经safe_path限制于workspace；glob未使用同等检查，PowerShell仅固定cwd，没有系统级隔离。
 
 ### 结束与恢复
@@ -184,7 +185,7 @@ session
 
 - 停止是协作式信号，不强杀已启动命令；审批等待尚未接停止信号，子助手流中也不逐delta检查停止。
 - regenerate不撤销文件/命令副作用；删除旧turn事实后，用量聚合自然排除旧轮。
-- 重启后未决审批可能仍能回放，但原等待槽已不存在；子助手fullAccess选项限制未完整持久化。
+- 审批事件不入数据库；重启后不会回放失效审批。子助手刷新时仍禁止 fullAccess。
 
 ## 8. 观测与扩展
 

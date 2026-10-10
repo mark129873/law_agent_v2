@@ -1,4 +1,4 @@
-"""会话回放层：从四表读出并拼装成上层需要的结构。
+"""会话回放层：从六表读出并拼装成上层需要的结构。
 
 两个出口（docs/ARCHITECTURE.md §3.5）：
 - load_replay：给前端的完整回放（按 turn 分组：用户消息 → 工作块条目 → 最终回复）；
@@ -6,7 +6,7 @@
   compact 边界裁剪）。
 
 归属规则（ZCode 同款思想的落地）：
-- message 元信息带 metadata.turnId 标签，part 通过 message_id 归属，turn 只是行的标签不是容器；
+- message 元信息带 anchor.turnId 标签，part 通过 message_id 归属，turn 只是行的标签不是容器；
 - 每轮"最后一条 text part"提升为 final_text（工作块外的最终回复），
   其余过程条目全部留在工作块内；
 - 没有 turn 收口事实的轮次：在 running_turn_ids 里视为 running，
@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.config import settings
 from app.models import Message, Part, Session
-from app.sessions.approvals import build_options
-from app.sessions.store import _load, entry_data, list_entries, message_role, turn_id as message_turn_id, part_kind, part_data, session_info
+from app.sessions.approvals import approval_events, get_request
+from app.sessions.store import _load, list_turns, turn_fact, message_role, turn_id as message_turn_id, part_kind, part_data, session_info
 
 
 def _message_text(parts: list[Part]) -> str:
@@ -67,39 +67,33 @@ def load_replay(
     if session_row is None or session_row.time_archived is not None:
         return None
 
-    # --- 事实行 ---
-    turn_facts: dict[str, dict] = {}
-    approvals: list[dict] = []
-    compactions: list[dict] = []
-    context_used = 0  # 最近一轮"最后一步 input"≈当前上下文占用（进度条口径）
-    for entry in list_entries(db, session_id):
-        data = entry_data(entry)
-        # 轮次来自 JSON 元信息，由存储适配器投影为回放标签
-        turn_label = data.get("turn_id", "")
-        if entry.type == "turn":
-            turn_facts[data.get("turn_id", "")] = data
-            context_used = int(data.get("context_tokens", 0) or 0)  # 时间升序，后者覆盖
-        elif entry.type == "approval":
-            approvals.append({**data, "turn_id": turn_label})
-        elif entry.type == "compaction":
-            compactions.append({**data, "turn_id": turn_label})
-
-    # --- 消息与部件 ---
+    turn_facts = {r.turn_id: turn_fact(r) for r in list_turns(db, session_id)}
+    approvals = approval_events(session_id)
+    compactions = []
     messages, parts_by_message = _load_messages_and_parts(db, session_id)
+    context_used = next((_load(m.data)['tokens']['input'] for m in reversed(messages)
+                         if message_role(m) == 'assistant' and 'tokens' in _load(m.data)), 0)
+    for msg in messages:
+        for part in parts_by_message.get(msg.id, []):
+            data = _load(part.data)
+            if data.get('type') == 'compaction':
+                compactions.append({'turn_id': message_turn_id(msg), 'time': part.time_created,
+                                    'tokens_before': data.get('preCompactTokenCount'),
+                                    'tokens_after': data.get('postCompactTokenCount')})
 
     # --- 按 turn 分组（保持 message sequence 顺序即时间线顺序） ---
     turns: dict[str, dict] = {}
     turn_order: list[str] = []
     for msg in messages:
+        if _load(msg.data).get("synthetic"):
+            continue
         turn_id = message_turn_id(msg)
         if turn_id not in turns:
             fact = turn_facts.get(turn_id, {})
             turns[turn_id] = {
                 "turn_id": turn_id,
-                "state": fact.get(
-                    "state",
-                    "running" if turn_id in running_turn_ids else "stopped",
-                ),
+                "state": ("running" if turn_id in running_turn_ids else
+                          (fact.get("state", "stopped") if fact.get("state") != "running" else "stopped")),
                 "started_at": fact.get("started_at", msg.time_created),
                 "ended_at": fact.get("ended_at"),
                 "active_ms": fact.get("active_ms"),
@@ -137,30 +131,26 @@ def load_replay(
                         "id": part.id,
                         "name": data.get("name", ""),
                         "input": data.get("input"),
-                        "status": data.get("status", "completed"),
+                        "status": "failed" if data.get("status") == "error" else data.get("status", "completed"),
                         "output": data.get("output", ""),
                         "time": item_time,
                     }
                 )
-            elif part_kind(part) == "subtask":
-                bucket["work_items"].append(
-                    {
-                        "kind": "subtask",
-                        "id": part.id,
-                        "goal": data.get("goal", ""),
-                        "status": data.get("status", "completed"),
-                        "output": data.get("output", ""),
-                        "time": item_time,
-                    }
-                )
-            elif part_kind(part) == "todo":
-                bucket["work_items"].append(
-                    {"kind": "todo", "id": part.id, "items": data.get("items", []), "time": item_time}
-                )
-            elif part_kind(part) == "error":
-                bucket["work_items"].append(
-                    {"kind": "error", "id": part.id, "message": data.get("message", ""), "time": item_time}
-                )
+                # 卡片是工具事实的界面投影，不另存自定义 part。
+                if data.get('name') == 'subtask':
+                    bucket['work_items'].append({'kind': 'subtask', 'id': part.id,
+                        'goal': (data.get('input') or {}).get('goal', ''),
+                        'status': 'failed' if data.get('status') == 'error' else data.get('status', 'running'),
+                        'output': data.get('output', ''), 'time': item_time})
+                elif data.get('name') == 'todo_write' and data.get('status') == 'completed':
+                    from app.agent.todo import parse_items
+                    items, error = parse_items((data.get('input') or {}).get('items'))
+                    if not error:
+                        bucket['work_items'].append({'kind': 'todo', 'id': part.id, 'items': items, 'time': item_time})
+        error = _load(msg.data).get('error')
+        if error:
+            bucket['work_items'].append({'kind': 'error', 'id': msg.id,
+                'message': error.get('data', {}).get('message', error.get('name', '')), 'time': msg.time_updated})
 
     # 审批与压缩事实按 turn_id 归入工作块。
     # 审批同一 request_id 只保留最新一条事实（请求→决定是同一张卡的演进，
@@ -213,14 +203,8 @@ def load_replay(
     # 未决审批：用上面去重后的最新状态（仍是 requested 即未决）。
     # 附上动态选项与 full_access 标志——刷新恢复的弹窗与实时流同构。
     pending = next(
-        (a for a in latest_by_request.values() if a.get("status") == "requested"), None
+        (a for a in latest_by_request.values() if a.get("status") == "requested" and get_request(a["request_id"])), None
     )
-    if pending is not None:
-        pending = {
-            **pending,
-            "options": build_options(pending.get("tool", ""), pending.get("input") or {}, True),
-            "full_access": True,
-        }
 
     return {
         "session": {
@@ -237,7 +221,7 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
     """重建模型可见历史（Anthropic messages 形态）。
 
     规则：
-    - 有 compact 事实时，只取 before_sequence 之后的消息，并在最前面放一条
+    - 有 compaction 部件时，只取 tail_start_id 指向消息之后的历史，并在最前面放一条
       携带摘要的 user 消息（ZCode：摘要消息成为边界）；
     - assistant 消息 = text 块 + tool_use 块（每个 tool_call part 一块，
       无论结果状态如何——模型必须看到自己发起的调用与结果才能续推）；
@@ -245,22 +229,21 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
     """
     messages, parts_by_message = _load_messages_and_parts(db, session_id)
 
-    # compact 边界：取最后一次压缩的 before_sequence 与摘要文本
-    cutoff_seq = 0
-    summary_text = ""
-    for entry in list_entries(db, session_id, "compaction"):
-        data = entry_data(entry)
-        cutoff_seq = max(cutoff_seq, data.get("before_sequence", 0))
-        summary_text = data.get("summary_text", summary_text)
-
+    # 最新摘要是隐藏的合成用户消息；tail_start_id 指向最后被摘要的消息。
+    cutoff_seq = -1
+    summary_text = ''
+    for msg in messages:
+        if not _load(msg.data).get('synthetic'):
+            continue
+        for part in parts_by_message.get(msg.id, []):
+            data = _load(part.data)
+            if data.get('type') == 'compaction':
+                boundary = next((m for m in messages if m.id == data.get('tail_start_id')), None)
+                cutoff_seq = boundary.sequence if boundary else -1
+                summary_text = _message_text(parts_by_message.get(msg.id, []))
     result: list[dict] = []
     if summary_text:
-        result.append(
-            {
-                "role": "user",
-                "content": f"<此前对话摘要>\n{summary_text}\n</此前对话摘要>",
-            }
-        )
+        result.append({'role': 'user', 'content': f'<此前对话摘要>\n{summary_text}\n</此前对话摘要>'})
 
     pending_tool_results: list[dict] = []  # 待并入下一条 user 消息的 tool_result 块
 
@@ -271,7 +254,7 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
             pending_tool_results = []
 
     for msg in messages:
-        if msg.sequence <= cutoff_seq:
+        if _load(msg.data).get("synthetic") or msg.sequence <= cutoff_seq:
             continue
         if message_role(msg) == "user":
             flush_tool_results()
@@ -301,6 +284,7 @@ def load_history(db: DbSession, session_id: str) -> list[dict]:
                         "type": "tool_result",
                         "tool_use_id": data.get("tool_call_id", part.id),
                         "content": data.get("output", ""),
+                        **({"is_error": True} if data.get("status") == "error" else {}),
                     }
                 )
         if content:

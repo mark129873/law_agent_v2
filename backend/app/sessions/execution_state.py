@@ -1,5 +1,5 @@
 """项目权限配置：ZCode local_setting 结构；不读取/迁移旧 JSON 文件。"""
-import hashlib
+import re
 import json
 import os
 import threading
@@ -20,8 +20,8 @@ def project_directory(data_dir) -> str:
 
 
 def project_id(data_dir) -> str:
-    """稳定项目标识，不用易冲突的目录名，也不使用每次变化的随机值。"""
-    return hashlib.sha256(project_directory(data_dir).encode()).hexdigest()
+    """采用 ZCode projectIdFromDirectory 的小写目录 slug（最多 80 字符）。"""
+    return re.sub(r"[^a-z0-9._-]+", "-", project_directory(data_dir).lower()).strip("-")[:80] or "default"
 
 
 def _read(data_dir, key: str, scope_id: str | None = None) -> dict:
@@ -69,7 +69,7 @@ def load_permission_rules(data_dir, *, project_id: str | None = None) -> dict:
     rules = {"version": 1}
     for behavior in ("allow", "deny", "ask"):
         bucket = data.get(behavior, [])
-        rules[behavior] = [r for r in bucket if isinstance(r, dict) and isinstance(r.get("tool"), str)] if isinstance(bucket, list) else []
+        rules[behavior] = [r for r in bucket if isinstance(r, dict) and isinstance(r.get("toolName"), str)] if isinstance(bucket, list) else []
     return rules
 
 
@@ -85,10 +85,10 @@ def add_permission_rule(data_dir, behavior: str, tool: str, content: str | None,
     # 同进程审批端点可能并行执行，串行追加避免读改写丢失另一条规则。
     with _RULE_LOCK:
         ruleset = load_permission_rules(data_dir, project_id=project_id)
-        rule = {"tool": tool}
+        rule = {"toolName": tool}
         if content:
-            rule["content"] = content
-        if not any(r.get("tool") == tool and (r.get("content") or "") == (content or "") for r in ruleset[behavior]):
+            rule["ruleContent"] = content
+        if not any(r.get("toolName") == tool and (r.get("ruleContent") or "") == (content or "") for r in ruleset[behavior]):
             ruleset[behavior].append(rule)
             save_permission_rules(data_dir, ruleset, project_id=project_id)
         return ruleset

@@ -30,6 +30,9 @@ def tmp_data_dir() -> Path:
         # Windows 上 SQLite 连接/日志句柄未释放时目录删不掉，先全部释放再删
         shutdown_logging()
         db.dispose_engine()
+        from app.sessions import approvals
+        approvals._events.clear()
+        approvals._pending.clear()
         shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
 
     if _TEST_DATA_DIR.exists():

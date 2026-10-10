@@ -11,7 +11,7 @@
   LLM 异常转成 error 事件并以 failed 收口；
 - stop_flag 在每个检查点轮询：流中、每个工具执行前、每轮开始；
   命中即以 stopped 收口，已生成的部分已落盘（停止后保留部分输出）；
-- 工时记账：审批等待前后调 recorder.pause/resume，active_ms 不含等待。
+- 工时记账：记录本轮总耗时，包含审批等待。
 """
 
 import asyncio
@@ -155,6 +155,7 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 state = "failed"
                 break
             text_acc, tool_uses = reply.text, reply.tool_uses
+            deps.recorder.finish_message(message_id, "tool_calls" if tool_uses else "stop")
 
             # ---- 里程碑落盘：正文与工具调用（pending 态） ----
             if text_acc:

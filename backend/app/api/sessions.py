@@ -291,9 +291,9 @@ def submit_approval(session_id: str, body: ApprovalIn) -> dict:
         rule = derive_rule(info.get("tool") or "", info.get("input") or {})
         if rule:
             execution_state.add_permission_rule(
-                settings.data_dir, "allow", rule["tool"], rule["content"]
+                settings.data_dir, "allow", rule["toolName"], rule["ruleContent"]
             )
-            logger.info("审批规则已保存 tool=%s content=%s", rule["tool"], rule["content"])
+            logger.info("审批规则已保存 tool=%s content=%s", rule["toolName"], rule["ruleContent"])
 
     if option_id == "allowOnce" or option_id == "allowAlways":
         approved, used_feedback = True, None

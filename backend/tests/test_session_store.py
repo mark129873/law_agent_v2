@@ -1,3 +1,4 @@
+from storage_seed import seed_record
 """BE-2 验证：会话存储层（四表 upsert / turn 事实 / 软删 / 回放拼装 / 历史重建）。
 
 全部使用 tests/.tmp-data/ 沙箱与真实 SQLite 引擎，不涉及 LLM 调用。
@@ -26,7 +27,7 @@ def test_draft_ensure_session_once(store_db) -> None:
     again = store.ensure_session(d, "s1", "other-model", "第二次不该生效")
     assert row.id == again.id and row.title == again.title
     assert len(row.title) <= 30
-    assert store.session_info(d, row)["model"] == "test-model"
+    assert store.session_info(d, row)["model"] == ""
 
 
 def test_message_sequence_assign_and_preserve(store_db) -> None:
@@ -35,11 +36,11 @@ def test_message_sequence_assign_and_preserve(store_db) -> None:
     _session(d)
     m1 = store.save_user_message(d, "s1", "m1", "你好", "t1")
     m2 = store.upsert_message(d, "s1", "m2", "assistant", {}, "t1")
-    assert (m1.sequence, m2.sequence) == (1, 2)
+    assert (m1.sequence, m2.sequence) == (0, 1)
 
     # 同 id 重写：正文更新、sequence 不变（ZCode 防时间线漂移规则）
     m1_again = store.save_user_message(d, "s1", "m1", "你好（修正）", "t1")
-    assert m1_again.sequence == 1
+    assert m1_again.sequence == 0
     assert "text" not in json.loads(m1_again.data)
     assert store.part_data(d.get(Part, "m1"))["text"] == "你好（修正）"
     assert m1_again.time_updated >= m1_again.time_created
@@ -89,7 +90,7 @@ def _seed_two_turns(d) -> None:
         "t1",
     )
     store.upsert_part(d, "s1", "a1", "p_t1_text2", "text", {"text": "目录里有 a.py，结论如下"}, "t1")
-    store.put_entry(d, "s1", "turn", {
+    seed_record(d, "s1", "turn", {
         "turn_id": "t1", "started_at": 1.0, "ended_at": 2000.0,
         "active_ms": 1800.0, "state": "success", "tokens_used": 100,
     })
@@ -132,7 +133,7 @@ def test_replay_approval_trace_and_pending(store_db) -> None:
     d = store_db
     _session(d)
     store.save_user_message(d, "s1", "u1", "删除文件", "t1")
-    store.put_entry(d, "s1", "approval", {
+    seed_record(d, "s1", "approval", {
         "turn_id": "t1", "request_id": "r1", "tool": "bash",
         "input": {"command": "del a.txt"}, "reason": "shell 删除命令",
         "status": "requested", "time": 1.0,
@@ -142,7 +143,7 @@ def test_replay_approval_trace_and_pending(store_db) -> None:
     assert any(x["kind"] == "approval" for x in result["turns"][0]["work_items"])
 
     # 用户批准：再写一条同 request_id 的已决事实（留痕），未决消失
-    store.put_entry(d, "s1", "approval", {
+    seed_record(d, "s1", "approval", {
         "turn_id": "t1", "request_id": "r1", "tool": "bash",
         "input": {"command": "del a.txt"}, "reason": "shell 删除命令",
         "status": "approved", "time": 2.0,
@@ -203,7 +204,7 @@ def test_load_history_compact_boundary(store_db) -> None:
     store.save_user_message(d, "s1", "u1", "第一轮", "t1")
     store.upsert_message(d, "s1", "a1", "assistant", {}, "t1")
     store.upsert_part(d, "s1", "a1", "p1", "text", {"text": "第一轮回复"}, "t1")
-    store.put_entry(d, "s1", "compaction", {
+    seed_record(d, "s1", "compaction", {
         "turn_id": "t2", "before_sequence": 2, "summary_text": "之前聊了第一轮",
         "tokens_before": 500, "tokens_after": 120, "time": 1.0,
     })

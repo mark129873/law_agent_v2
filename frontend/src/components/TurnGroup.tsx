@@ -3,7 +3,7 @@
  *
  * 块头状态机（ZCode 桌面端同款，docs/PRODUCT.md §3.2）：
  * - running：  "工作中 {耗时}"（每秒跳动的本地时钟，仅 running 态允许用当前时钟）
- * - success：  "已工作 {耗时}"（取落盘的 active_ms 权威值，完成后自动收起）
+ * - success：  "总耗时 {耗时}"（取落盘的 active_ms 权威值，完成后自动收起）
  * - stopped/failed："已停止 {耗时}"（强制展开，回看上下文）
  * 归属切分：每轮最后一条 assistant 正文（final_text）在块外完整渲染，
  * 其余过程条目全部收在块内。
@@ -46,7 +46,7 @@ function useLiveElapsed(startedAt: number, running: boolean): number {
 export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps) {
   const running = turn.state === 'running'
   const liveMs = useLiveElapsed(turn.started_at, running)
-  // 展示耗时：运行中用本地秒表；结束态用落盘的权威工时（不随时间增长）
+  // 展示耗时：运行中用本地秒表；结束态用落盘的总耗时（包含审批等待）（不随时间增长）
   const shownMs = running ? liveMs : turn.active_ms
 
   // 默认展开规则：运行中展开；完成收起；停止/失败强制展开
@@ -66,7 +66,7 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
     turn.state === 'running'
       ? `工作中 ${fmtDuration(shownMs)}`
       : turn.state === 'success'
-        ? `已工作 ${fmtDuration(shownMs)}`
+        ? `总耗时 ${fmtDuration(shownMs)}`
         : turn.state === 'failed'
           ? `已失败 ${fmtDuration(shownMs)}` // API 异常等失败轮：与"已停止"（用户主动）区分
           : `已停止${shownMs ? ` ${fmtDuration(shownMs)}` : ''}`

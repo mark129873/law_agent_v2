@@ -1,165 +1,102 @@
-"""turn 里程碑落盘器：把主循环的关键节点写入四表（store.py 的调用者）。
-
-为什么单独一层：主循环只管"执行并吐事件"，持久化细节（行结构、id、
-工时记账）收在这里，两边都保持简单。工时记账（active_ms）排除审批
-等待时间：循环在调审批回调前调 pause_active()，回来后 resume_active()。
-"""
-
-from app.models import new_id, now_ms
+"""turn 记录器：六表子集，消息元信息与轮次累计分开保存。"""
+from app.models import Message, TurnUsage, new_id, now_ms
 from app.sessions import store
 
 
 class TurnRecorder:
-    """一个 turn 对应一个 recorder 实例。"""
-
     def __init__(self, db, session_id: str, model: str, max_tokens: int) -> None:
-        self.db = db
-        self.session_id = session_id
-        self.model = model
+        self.db, self.session_id, self.model = db, session_id, model
         self.max_tokens = max_tokens
         self.turn_id = new_id()
-        self._started_at: float | None = None
-        self._pause_started: float | None = None
-        self._paused_ms: float = 0.0
-        self.tokens_used = 0  # 本轮输出 token 累计
-        self.tokens_input = 0  # 本轮输入 token 累计（用量聚合）
-        self.cache_read_tokens = 0  # 本轮命中缓存的输入累计（端点支持才有值）
-        self.cache_creation_tokens = 0  # 本轮写缓存的输入累计
-        self._last_input = 0  # 最近一步的 input（≈当前上下文占用，进度条口径）
-        # 本轮用户消息的 sequence（compact 边界：在此之前的历史才可被摘要）
+        self._started_at = None
+        self._message_id = None
+        self.tokens_used = self.tokens_input = 0
+        self.cache_read_tokens = self.cache_creation_tokens = 0
+        self._last_input = 0
         self.first_user_sequence = 0
 
     @property
-    def started_at(self) -> float | None:
-        """turn 开始时间（事件用，避免外部摸私有字段）。"""
+    def started_at(self):
         return self._started_at
 
-    def add_usage(
-        self, input_tokens: int, output_tokens: int,
-        cache_read_tokens: int = 0, cache_creation_tokens: int = 0,
-    ) -> None:
-        """累计本次 turn 的 token 用量（usage 事件驱动，输入/输出/缓存分开记账）。"""
+    def add_usage(self, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0,
+                  cache_creation_tokens: int = 0, *, subtask: bool = False) -> None:
+        """子模型只入整轮累计，不能覆盖主模型消息的 usage 或上下文占用。"""
         self.tokens_used += output_tokens
         self.tokens_input += input_tokens
         self.cache_read_tokens += cache_read_tokens
         self.cache_creation_tokens += cache_creation_tokens
-        self._last_input = input_tokens
+        if not subtask:
+            self._last_input = input_tokens
+            if self._message_id:
+                row = self.db.get(Message, self._message_id)
+                data = store._load(row.data)
+                data['tokens'] = {'input': input_tokens, 'output': output_tokens,
+                                  'cache': {'read': cache_read_tokens, 'write': cache_creation_tokens}}
+                row.data = store._dump(data)
+                self.db.commit()
 
-    # ---------- 生命周期 ----------
-
-    def begin_turn(
-        self, user_text: str, persist_user: bool = True, user_sequence: int | None = None
-    ) -> str:
-        """turn 开始：确保会话行存在、落用户消息、记上下文快照。
-
-        persist_user=False 用于重新生成：用户消息已存在（保留的那条），
-        不再新落一条；user_sequence 直接采用既有消息的 sequence。
-        """
+    def begin_turn(self, user_text: str, persist_user: bool = True, user_sequence=None) -> str:
         if persist_user:
             store.ensure_session(self.db, self.session_id, self.model, user_text)
-            user_row = store.save_user_message(
-                self.db, self.session_id, new_id(), user_text, self.turn_id, self.model
-            )
-            self.first_user_sequence = user_row.sequence
+            user = store.save_user_message(self.db, self.session_id, new_id(), user_text, self.turn_id, self.model)
+            self.first_user_sequence = user.sequence
         else:
-            # 重新生成：会话行必然已存在，锚定保留的那条用户消息
-            self.first_user_sequence = user_sequence or 0
-        store.put_entry(
-            self.db,
-            self.session_id,
-            "context",
-            {"model": self.model, "max_tokens": self.max_tokens, "time": now_ms()},
-            turn_id=self.turn_id,
-        )
+            user = store.find_last_user_message(self.db, self.session_id)
+            self.first_user_sequence = user_sequence if user_sequence is not None else user.sequence
         self._started_at = now_ms()
+        self.db.add(TurnUsage(session_id=self.session_id, turn_id=self.turn_id, user_message_id=user.id,
+                              status='running', started_at=self._started_at))
+        self.db.commit()
         return self.turn_id
 
-    def pause_active(self) -> None:
-        """暂停工时累计（等待用户审批期间不计入有效工时）。"""
-        if self._pause_started is None:
-            self._pause_started = now_ms()
-
-    def resume_active(self) -> None:
-        """恢复工时累计。"""
-        if self._pause_started is not None:
-            self._paused_ms += now_ms() - self._pause_started
-            self._pause_started = None
-
     def end_turn(self, state: str) -> dict:
-        """turn 收口：写 turn 事实（工作块与会话用量的共同数据源）。
-
-        tokens_used=输出累计、input_tokens=输入累计、context_tokens=最近一步
-        input（≈当前上下文占用，进度条口径），均由 usage 事件驱动。
-        """
-        self.resume_active()  # 若停在审批等待中收口，先把暂停段结掉
-        ended_at = now_ms()
-        active_ms = max(0.0, ended_at - (self._started_at or ended_at) - self._paused_ms)
-        fact = {
-            "turn_id": self.turn_id,
-            "started_at": self._started_at or ended_at,
-            "ended_at": ended_at,
-            "active_ms": active_ms,
-            "state": state,
-            "tokens_used": self.tokens_used,
-            "input_tokens": self.tokens_input,
-            "context_tokens": self._last_input,
-            "cache_read_tokens": self.cache_read_tokens,
-            "cache_creation_tokens": self.cache_creation_tokens,
-        }
-        store.put_entry(self.db, self.session_id, "turn", fact, turn_id=self.turn_id)
-        return fact
-
-    # ---------- 消息与部件 ----------
+        """总耗时包含审批等待；状态使用 ZCode 词表，API 在边界转换。"""
+        ended = now_ms()
+        row = self.db.get(TurnUsage, (self.session_id, self.turn_id))
+        if row is None:
+            row = TurnUsage(session_id=self.session_id, turn_id=self.turn_id, started_at=self._started_at or ended)
+            self.db.add(row)
+        row.status = {'success': 'completed', 'failed': 'error', 'stopped': 'cancelled'}[state]
+        row.completed_at = ended
+        row.duration_ms = max(0, ended - row.started_at)
+        row.input_tokens, row.output_tokens = self.tokens_input, self.tokens_used
+        row.cache_read_input_tokens, row.cache_creation_input_tokens = self.cache_read_tokens, self.cache_creation_tokens
+        self.db.commit()
+        return store.turn_fact(row)
 
     def step_message(self) -> str:
-        """assistant 模型步开始：建 message 行（里程碑语义，ZCode 同款）。"""
         parent = store.find_last_user_message(self.db, self.session_id)
-        row = store.upsert_message(
-            self.db, self.session_id, new_id(), "assistant",
-            {"modelId": self.model, "parentID": parent.id if parent else None}, self.turn_id
-        )
+        row = store.upsert_message(self.db, self.session_id, new_id(), 'assistant',
+                                  {'modelId': self.model, 'parentID': parent.id if parent else None}, self.turn_id)
+        self._message_id = row.id
         return row.id
 
+    def finish_message(self, message_id: str, finish: str = 'stop') -> None:
+        row = self.db.get(Message, message_id)
+        data = store._load(row.data)
+        data['time']['completed'] = now_ms()
+        data['finish'] = finish
+        row.time_updated = data['time']['completed']
+        row.data = store._dump(data)
+        self.db.commit()
+
     def write_text_part(self, message_id: str, text: str) -> str:
-        """该步响应结束时整段落 text part（流式增量不落库）。"""
-        part_id = new_id()
-        store.upsert_part(
-            self.db, self.session_id, message_id, part_id, "text", {"text": text}, self.turn_id
-        )
-        return part_id
+        pid = new_id()
+        store.upsert_part(self.db, self.session_id, message_id, pid, 'text', {'text': text}, self.turn_id)
+        return pid
 
     def upsert_tool_part(self, message_id: str, part_id: str, data: dict) -> None:
-        """工具部件生命周期：同一 part_id 反复推进（pending→running→completed/...）。"""
-        store.upsert_part(
-            self.db, self.session_id, message_id, part_id, "tool_call", data, self.turn_id
-        )
+        store.upsert_part(self.db, self.session_id, message_id, part_id, 'tool_call', data, self.turn_id)
 
-    def write_subtask_part(self, message_id: str, data: dict) -> str:
-        """subtask 卡片落盘（BE-8 使用）：先写 running 态。"""
-        part_id = new_id()
-        store.upsert_part(
-            self.db, self.session_id, message_id, part_id, "subtask", data, self.turn_id
-        )
-        return part_id
-
-    def update_subtask_part(self, part_id: str, message_id: str, data: dict) -> None:
-        """subtask 收口：同一 part 行更新为最终状态与完整输出。"""
-        store.upsert_part(
-            self.db, self.session_id, message_id, part_id, "subtask", data, self.turn_id
-        )
-
-    def write_todo_part(self, message_id: str, items: list) -> str:
-        """任务板快照落盘（BE-8 使用）。"""
-        part_id = new_id()
-        store.upsert_part(
-            self.db, self.session_id, message_id, part_id, "todo", {"items": items}, self.turn_id
-        )
-        return part_id
+    def write_todos(self, items: list) -> None:
+        store.replace_todos(self.db, self.session_id, items)
 
     def write_error_part(self, message_id: str, message: str) -> str:
-        """错误卡片落盘（API 失败等）。"""
-        part_id = new_id()
-        store.upsert_part(
-            self.db, self.session_id, message_id, part_id, "error", {"message": message}, self.turn_id
-        )
-        return part_id
+        """保留调用入口名；实际错误属于 message.error，不创建 error part。"""
+        row = self.db.get(Message, message_id)
+        data = store._load(row.data)
+        data['error'] = {'name': 'APIError', 'data': {'message': message}}
+        row.data = store._dump(data)
+        self.finish_message(message_id, 'error')
+        return message_id

@@ -2,7 +2,7 @@
 
 - 全量替换语义：每次调用用新列表覆盖任务板；
 - 校验：≤20 条、status 三态、进行中最多 1 条；
-- Web 版差异：合法更新会落一张 todo part（覆盖显示最新状态）并推
+- Web 版差异：合法更新会全量替换 todo 表（保存最新状态）并推
   todo_updated 事件；非法输入返回 Error 字符串（不落盘）。
 """
 
@@ -67,5 +67,5 @@ async def handle_todo_write(deps, message_id: str, tool_input: dict) -> tuple[st
     if items is None:
         return error, []
 
-    deps.recorder.write_todo_part(message_id, items)
+    deps.recorder.write_todos(items)
     return render_panel(items), [{"type": "todo_updated", "items": items}]

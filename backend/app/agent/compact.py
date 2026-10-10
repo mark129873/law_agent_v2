@@ -98,7 +98,8 @@ def microcompact_parts(db, session_id: str, keep: int) -> int:
     changed = 0
     for part in to_clear:
         data = store._load(part.data)
-        data["state"]["output"] = _MICRO_PLACEHOLDER
+        key = "error" if data["state"]["status"] == "error" else "output"
+        data["state"][key] = _MICRO_PLACEHOLDER
         part.data = store._dump(data)
         changed += 1
     if changed:
@@ -204,20 +205,8 @@ async def maybe_compact(deps) -> AsyncIterator[dict]:
 
     _failure_counts[session_id] = 0
     cutoff = deps.recorder.first_user_sequence - 1  # 当前轮的消息全部留在边界之后
-    store.put_entry(
-        deps.recorder.db,
-        session_id,
-        "compaction",
-        {
-            "turn_id": deps.recorder.turn_id,
-            "before_sequence": cutoff,
-            "summary_text": summary_text,
-            "tokens_before": tokens_before,
-            "tokens_after": estimate_tokens(summary_text),
-            "time": deps.recorder.started_at,
-        },
-        turn_id=deps.recorder.turn_id,
-    )
+    store.save_compaction(deps.recorder.db, session_id, deps.recorder.turn_id,
+                          cutoff, summary_text, tokens_before, estimate_tokens(summary_text))
     # 就地重建内存历史：摘要 + 当前用户消息
     deps.history[:] = [
         {"role": "user", "content": f"<此前对话摘要>\n{summary_text}\n</此前对话摘要>"},

@@ -48,8 +48,7 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
         return
 
     subtask_id = new_id()
-    # 落 running 态卡片，拿回 part id 供收口时更新同一行
-    part_id = deps.recorder.write_subtask_part(message_id, {"goal": goal, "status": "running", "output": ""})
+    # 状态与结果由父工具 part 保存；不创建与 ZCode 同名异义的 subtask 部件。
     await deps.queue.put({"type": "subtask_started", "subtask_id": subtask_id, "goal": goal})
 
     child_history: list[dict] = [{"role": "user", "content": goal}]
@@ -72,7 +71,7 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                         # 子循环 token 与主循环同口径：计入会话统计（add_usage），
                         # 并发 token_count 事件给前端（经生成器逐层转发出 SSE）。
                         # 注意不喂 deps.last_input_tokens——那是主循环 compact 预算的口径
-                        deps.recorder.add_usage(**reply.usage)
+                        deps.recorder.add_usage(**reply.usage, subtask=True)
                         yield {"type": "token_count", **reply.usage}
             text_acc, tool_uses = reply.text, reply.tool_uses
 
@@ -96,7 +95,7 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                     status = "stopped"
                     break
                 # 子工具权限与主循环同权（ZCode：子代理请求路由父会话 UI）：
-                # allow 执行 / deny 拒绝 / ask 走交互审批（挂起等待，工时暂停）
+                # allow 执行 / deny 拒绝 / ask 走交互审批（挂起等待，计入轮次总耗时）
                 out = await authorize_tool(
                     deps, t["name"], t.get("input") or {}, allow_full_access=False
                 )
@@ -118,6 +117,9 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
         output_acc.append(f"\nError: {exc}")
 
     output = "".join(output_acc).strip() or "(子助手无输出)"
-    deps.recorder.update_subtask_part(part_id, message_id, {"goal": goal, "status": status, "output": output})
+    # 工具错误统一以前缀识别，刷新后仍能从 tool state 恢复失败卡片。
+    if status == "failed" and not output.startswith("Error:"):
+        output = "Error: " + output
+
     await deps.queue.put({"type": "subtask_completed", "subtask_id": subtask_id, "status": status})
     yield {"_subtask_output": output}

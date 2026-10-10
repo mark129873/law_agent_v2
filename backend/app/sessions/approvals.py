@@ -25,6 +25,20 @@ logger = logging.getLogger(__name__)
 
 # request_id -> {"event", "approved", "feedback", "tool", "input", "options", "full_access"}
 _pending: dict[str, dict] = {}
+# ZCode 审批事件属于进程内事件流，不写 session_entry 或统计表。
+_events: dict[str, dict[str, dict]] = {}
+
+
+def approval_events(session_id):
+    return list(_events.get(session_id, {}).values())
+
+
+def forget_turn(session_id, turn_id):
+    records = _events.get(session_id, {})
+    for key in [k for k, v in records.items() if v['turn_id'] == turn_id]:
+        records.pop(key, None)
+        _pending.pop(key, None)
+
 
 
 def register(
@@ -76,14 +90,14 @@ def build_options(tool_name: str, tool_input: dict, allow_full_access: bool = Tr
         options.append({"option_id": "fullAccess", "label": "完全访问"})
     rule = derive_rule(tool_name, tool_input)
     if rule:
-        options.append({"option_id": "allowAlways", "label": "总是允许", "content": rule["content"]})
+        options.append({"option_id": "allowAlways", "label": "总是允许", "content": rule["ruleContent"]})
     options.append({"option_id": "deny", "label": "拒绝"})
     return options
 
 
 async def authorize_tool(deps, tool_name: str, tool_input: dict, *,
                          data_dir=None, allow_full_access: bool = True) -> str | None:
-    """共用权限闸门：None放行，拒绝返回Error；审批等待统一剔除工时。"""
+    """共用权限闸门：None放行，拒绝返回Error；审批等待包含在总耗时中。"""
     result = evaluate(data_dir, tool_name, tool_input)
     decision, reason = result["decision"], result["reason"]
     if decision == "allow":
@@ -93,11 +107,7 @@ async def authorize_tool(deps, tool_name: str, tool_input: dict, *,
 
     # 主循环沿用默认选项；子助手明确禁用完全访问，避免复用时丢失限制。
     options = {} if allow_full_access else {"allow_full_access": False}
-    deps.recorder.pause_active()
-    try:
-        outcome = await deps.approver(tool_name, tool_input, reason or "该操作需要确认", **options)
-    finally:
-        deps.recorder.resume_active()
+    outcome = await deps.approver(tool_name, tool_input, reason or "该操作需要确认", **options)
     if not outcome["approved"]:
         return f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or reason}"
     return None
@@ -113,7 +123,7 @@ class InteractiveApprover:
     def __init__(self, db, session_id: str, recorder, queue: asyncio.Queue) -> None:
         self.db = db
         self.session_id = session_id
-        self.recorder = recorder  # 取 turn_id 与工时记账由循环负责（pause/resume 在 loop）
+        self.recorder = recorder  # 读取当前 turn_id
         self.queue = queue
 
     async def __call__(
@@ -122,20 +132,12 @@ class InteractiveApprover:
         request_id = new_id()
         options = build_options(tool_name, tool_input, allow_full_access)
 
-        # 1. 落"待决"事实（刷新后回放可恢复弹窗的数据源）
-        store.put_entry(
-            self.db, self.session_id, "approval",
-            {
-                "turn_id": self.recorder.turn_id,
-                "request_id": request_id,
-                "tool": tool_name,
-                "input": tool_input,
-                "reason": reason,
-                "status": "requested",
-                "time": now_ms(),
-            },
-            turn_id=self.recorder.turn_id,
-        )
+        _events.setdefault(self.session_id, {})[request_id] = {
+            'turn_id': self.recorder.turn_id, 'request_id': request_id, 'tool': tool_name,
+            'input': tool_input, 'reason': reason, 'status': 'requested', 'time': now_ms(),
+            'options': options, 'full_access': allow_full_access}
+        # 先注册等待槽，再发布事件，避免前端快速回应落在注册之前。
+        slot = register(request_id, tool_name, tool_input, options, allow_full_access)
         # 2. 推审批请求给前端（循环阻塞中，由这里直推队列）
         await self.queue.put(
             {
@@ -149,26 +151,12 @@ class InteractiveApprover:
             }
         )
 
-        # 3. 挂起等待（工时暂停由循环包在 pause/resume 里）
-        slot = register(request_id, tool_name, tool_input, options, allow_full_access)
+        # 3. 挂起等待（包含在 turn 总耗时内）
         await slot["event"].wait()
         approved = slot["approved"]
         feedback = slot.get("feedback")
 
-        # 4. 决定落痕（第二条事实：requested + resolved 都留痕）
-        store.put_entry(
-            self.db, self.session_id, "approval",
-            {
-                "turn_id": self.recorder.turn_id,
-                "request_id": request_id,
-                "tool": tool_name,
-                "input": tool_input,
-                "reason": reason,
-                "status": "approved" if approved else "denied",
-                "time": now_ms(),
-            },
-            turn_id=self.recorder.turn_id,
-        )
+        _events[self.session_id][request_id]['status'] = 'approved' if approved else 'denied'
         # 5. 通知前端结果（审批卡片翻转状态）
         await self.queue.put(
             {"type": "approval_resolved", "request_id": request_id, "approved": approved}

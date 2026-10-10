@@ -1,6 +1,15 @@
 # 会话交接
 
-## 最新（2026-10-10，Session 014）
+## 最新（2026-10-10，Session 015）
+
+- 基准 main 413997f；ZCode 29628c9；必要六表子集已实现，详见 storage-subset.md。
+- 新结构：session、message、part、local_setting、todo、turn_usage；不迁移旧库。
+- 审批内存保存，刷新恢复、重启清空；工具结果持久化。总耗时包含审批等待。
+- pytest 121 过；build 通过；lint 3 既有警告。云浏览器真实服务＋假模型交互及重启恢复通过。
+- README 未改；测试服务停止，临时数据不入库。通过 GitHub 插件提交 main，SHA 见 git log。
+- 后续仅处理下列既有缺口；历史记录中的四表/平台测试结果不代表当前结构。
+
+## 历史（2026-10-10，Session 014）
 
 - 基准 main 76970df；本轮仅新增 local_setting permission 存储，原四张会话表与审批选项不变。
 - 模式/规则读写改 SQLite；八字段/联合主键/索引对齐 ZCode。当前项目 ID 为规范工作区路径 SHA-256；无多项目界面。
@@ -39,20 +48,19 @@
 |---|---|---|
 | 审批停止 | 等待不监听stop；弹窗无停止按钮 | approvals.py、turn_manager.py、ApprovalModal.tsx |
 
-| 审批恢复 | 子助手fullAccess限制未持久化；重启可能弹出失效请求 | approvals.py、replay.py |
 | 工具呈现 | tool_started在执行结束后才发；自动放行无审批事实 | loop.py |
 | 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
 | 路径 | PowerShell无系统沙箱，glob未过safe_path | permission_service.py、tools.py |
 
-既有限制：长会话全量回放；3条非阻断前端lint警告；Linux缺PowerShell导致2项测试失败，Windows盘符路径断言另有1项失败。既有UI验收blocker见历史验证。
+既有限制：长会话全量回放；3 条前端 lint 警告；PowerShell 无系统沙箱。
 
 ## 下一步
 
-1. 在可访问的云浏览器补模式/审批验收，在Windows复测3项既有失败。
+1. 按需补 Windows 实机验收。
 2. 分项修复、补必要验证；既有passing不覆盖本轮发现的缺口。
    前端进一步精简可从发送/重跑共用生命周期、审批/子助手状态入手；本轮没有提前实施。
 3. 保留契约：
-   - 四表、稳定sequence、单Queue、审批工时、regenerate用量重算。
+   - 六表、稳定sequence、单Queue、轮次总耗时、regenerate用量重算。
    - 三栏flex/Provider、子助手面板引用、model-io写失败不阻断对话。
    - 不迁移数据库；测试空库；UI截图验收；日志/密钥不入库。
 

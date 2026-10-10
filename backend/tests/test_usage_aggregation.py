@@ -1,3 +1,4 @@
+from storage_seed import seed_record
 """用量聚合验证（docs/ARCHITECTURE.md §3.7）：
 turn 事实三级 token 字段 + 会话用量投影 + compact 真实预算激活 + regenerate 重算修正。
 """
@@ -51,10 +52,10 @@ def test_turn_usage_fact_and_session_columns(recorder) -> None:
     # compact 预算拿到真实 input（激活此前无人赋值的死路径）
     assert deps.last_input_tokens == 9
     # turn 事实：输出累计 / 输入累计 / 最近一步 input（上下文占用口径）/ 缓存读写
-    fact = store.entry_data(store.list_entries(recorder.db, "s1", "turn")[0])
+    fact = store.turn_fact(store.list_turns(recorder.db, "s1")[0])
     assert fact["tokens_used"] == 3
     assert fact["input_tokens"] == 9
-    assert fact["context_tokens"] == 9
+    assert replay.load_replay(recorder.db, "s1")["session"]["context_used"] == 9
     assert fact["cache_read_tokens"] == 7
     assert fact["cache_creation_tokens"] == 2
     # 会话用量投影
@@ -71,10 +72,10 @@ def test_recalc_session_usage_after_rollback(recorder) -> None:
     """regenerate 回滚后重算：被删轮的 token 不再计入（旧实现漏接线导致双算）。"""
     store.ensure_session(recorder.db, "s1", model="test-model", first_user_text="t")
     # 两轮事实：turn1(3/9)、turn2(4/20)；会话投影为 7/29
-    store.put_entry(recorder.db, "s1", "turn",
+    seed_record(recorder.db, "s1", "turn",
                     {"turn_id": "t1", "tokens_used": 3, "input_tokens": 9, "context_tokens": 9},
                     turn_id="t1")
-    store.put_entry(recorder.db, "s1", "turn",
+    seed_record(recorder.db, "s1", "turn",
                     {"turn_id": "t2", "tokens_used": 4, "input_tokens": 20, "context_tokens": 20},
                     turn_id="t2")
     row = store.session_info(recorder.db, recorder.db.get(Session, "s1"))

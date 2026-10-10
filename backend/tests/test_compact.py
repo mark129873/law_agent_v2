@@ -1,3 +1,4 @@
+from storage_seed import compactions
 """BE-7 验证：ZCode compact + microcompact（预算 / 占位改写 / 摘要边界 / 熔断）。"""
 
 import asyncio
@@ -152,9 +153,9 @@ def test_summarize_and_boundary(store_db) -> None:
     assert history[1] == {"role": "user", "content": "第二轮问题"}
 
     # 库里：compaction 事实边界 = 本轮用户消息 sequence - 1
-    entries = store.list_entries(store_db, "s1", "compaction")
-    data = store.entry_data(entries[-1])
-    assert data["before_sequence"] == user_row.sequence - 1
+    entries = compactions(store_db, "s1")
+    data = store._load(entries[-1].data)
+    assert data["tail_start_id"] == "a1"
 
     # 后续任何轮次的 load_history：摘要置顶、边界前正文不再下发
     fresh = replay.load_history(store_db, "s1")
@@ -183,7 +184,7 @@ def test_compact_skipped_when_within_budget(store_db) -> None:
         return [e async for e in compact.maybe_compact(deps)]
 
     assert asyncio.run(scenario()) == []
-    assert store.list_entries(store_db, "s1", "compaction") == []
+    assert compactions(store_db, "s1") == []
 
 
 def test_compact_circuit_breaker(store_db) -> None:

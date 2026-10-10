@@ -58,6 +58,19 @@ def init_db(data_dir: Path) -> Engine:
     # 建表（幂等：已存在的表跳过）。表结构由 models.py 声明；
     # 结构演进约定（产品决策 2026-09-28）：不做迁移，停服务并清理数据库文件后重启建表（保留其他数据）。
     Base.metadata.create_all(engine)
+    # ZCode 0015：允许省略 sequence 的写入，触发器补到所属 scope 队尾。
+    with engine.begin() as connection:
+        for table, scope in (("message", "session_id"), ("part", "message_id")):
+            connection.exec_driver_sql(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_sequence_autofill
+                AFTER INSERT ON {table} WHEN new.sequence IS NULL
+                BEGIN
+                    UPDATE {table} SET sequence = (
+                        SELECT coalesce(max(sequence), -1) + 1 FROM {table}
+                        WHERE {scope} = new.{scope}
+                    ) WHERE id = new.id;
+                END;
+            """)
 
     _engine = engine
     _session_factory = sessionmaker(bind=engine, expire_on_commit=False)

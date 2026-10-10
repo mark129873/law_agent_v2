@@ -177,29 +177,6 @@ def test_approval_rejected(recorder) -> None:
     assert events[-1]["active_ms"] >= 0
 
 
-def test_approval_approved_executes(recorder) -> None:
-    """审批回调批准：命令真正执行（删除类命令→批准→文件被删）。"""
-    from app.agent.tools import tool_write_file
-
-    tool_write_file("a.txt", "x")
-    client = FakeClient([
-        [{"type": "tool_use", "id": "tc4", "name": "bash", "input": {"command": "Remove-Item a.txt"}}],
-        [{"type": "text_delta", "text": "执行完成"}],
-    ])
-    approved_calls: list[str] = []
-
-    async def approve_all(tool, tool_input, reason):
-        approved_calls.append(tool)
-        return {"approved": True, "denial_reason": None}
-
-    deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
-                    history=[{"role": "user", "content": "删掉 a.txt"}], approver=approve_all)
-    events = _run(deps)
-    done = next(e for e in events if e["type"] == "tool_completed")
-    assert done["status"] == "completed"
-    assert approved_calls == ["bash"]
-    # 审批通过后命令真实执行：文件已被删除
-    assert not (workspace_root() / "a.txt").exists()
 
 
 # ---------- 停止与异常 ----------

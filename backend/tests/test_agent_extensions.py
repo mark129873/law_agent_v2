@@ -251,9 +251,9 @@ def test_subtask_tokens_counted(recorder) -> None:
     row = store.session_info(deps.recorder.db, deps.recorder.db.get(Session, "s1"))
     assert row["tokens_used"] == 55
     assert row["input_tokens"] == 120
-    fact = store.entry_data(store.list_entries(deps.recorder.db, "s1", "turn")[0])
+    fact = store.turn_fact(store.list_turns(deps.recorder.db, "s1")[0])
     assert fact["input_tokens"] == 120
-    assert fact["context_tokens"] == 20
+    assert replay.load_replay(deps.recorder.db, "s1")["session"]["context_used"] == 20
 
     # 3) model-io JSONL：三步都有记录；子循环那次带 subtask_id 且 usage 正确，
     #    主循环调用不带 subtask_id；全部调用同一 turn_id
@@ -327,6 +327,10 @@ def test_subtask_failure_records_partial_call(recorder) -> None:
     events = _run(TurnDeps(client=BrokenChildClient(), recorder=recorder, system_prompt="测试",
                           history=[{"role": "user", "content": "委派分析"}]))
     assert next(e for e in events if e["type"] == "subtask_completed")["status"] == "failed"
+    restored = replay.load_replay(recorder.db, "s1")
+    child_cards = [item for turn in restored["turns"] for item in turn["work_items"] if item["kind"] == "subtask"]
+    assert child_cards[-1]["status"] == "failed"
+    assert "子模型断线" in child_cards[-1]["output"]
     assert events[-1]["state"] == "success"
     path = Path(settings.modelio_dir) / "model-io-s1.jsonl"
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
