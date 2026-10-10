@@ -90,25 +90,52 @@ turn\_usage
 
 实现：[modelio.py](./backend/app/modelio.py)；主/子循环共用model\_call记录每次调用，成功/失败均写入。
 
-| 项        | 保存方式                                                     |
-| -------- | -------------------------------------------------------- |
-| 文件       | 项目根`log/model-io-<session_id>.jsonl`；每会话一个文件，一调用一行JSON追加 |
-| 标识       | time、session\_id、turn\_id、subtask\_id、model              |
-| request  | system/messages全文、tool\_names（不保存工具schema）               |
-| response | text、tool\_calls（id/name/input）                          |
-| usage    | input/output tokens、cache\_read/cache\_creation tokens   |
-| 诊断       | duration\_ms、error                                       |
-| 目录/轮转    | MODELIO\_DIR可覆盖；MODELIO\_MAX\_MB默认10；追加前检查，超限以纳秒后缀归档     |
-| 用途/失败    | 调试审计，不参与回放；写失败吞异常、记WARNING，不阻断对话                         |
+文件
+
+- 项目根`log/model-io-<session_id>.jsonl`；每会话一个文件，一调用一行JSON追加
+
+标识
+
+- time、session\_id、turn\_id、subtask\_id、model
+
+request
+
+- system/messages全文、tool\_names（不保存工具schema）
+
+response
+
+- text、tool\_calls（id/name/input）
+
+usage
+
+- input/output tokens、cache\_read/cache\_creation tokens
+
+诊断
+
+- duration\_ms、error
+
+目录/轮转
+
+- MODELIO\_DIR可覆盖；MODELIO\_MAX\_MB默认10；追加前检查，超限以纳秒后缀归档
+
+用途/失败
+
+- 调试审计，不参与回放；写失败吞异常、记WARNING，不阻断对话
 
 
 ## 3. 上下文压缩
 
-| 阶段           | 方法                                                   |
-| ------------ | ---------------------------------------------------- |
-| 触发           | 仅turn开始；历史token > 窗口 − 输出预留 − 安全buffer；默认预留32K + 13K |
-| microcompact | 直接将库内旧工具输出改为占位符；默认保留最近5条完整输出，重载历史后再判断预算              |
-| compact      | 仍超预算则LLM摘要此前历史；当前用户请求保留原文，不参与摘要                      |
+触发
+
+- 仅turn开始；历史token > 窗口 − 输出预留 − 安全buffer；默认预留32K + 13K
+
+microcompact
+
+- 直接将库内旧工具输出改为占位符；默认保留最近5条完整输出，重载历史后再判断预算
+
+compact
+
+- 仍超预算则LLM摘要此前历史；当前用户请求保留原文，不参与摘要
 
 
 # 初版最小harness实现 `scripts_mini_harness/mini_harness.py`
