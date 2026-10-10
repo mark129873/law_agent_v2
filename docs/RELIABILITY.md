@@ -10,7 +10,7 @@
 
 - 级别：ERROR异常堆栈；WARNING可恢复异常；INFO生命周期；DEBUG默认关闭。
 - httpx/httpcore/urllib3/anthropic 降至WARNING；Langfuse已移除。
-- 模型调用快照的格式、存储与轮转统一见[ARCHITECTURE.md](ARCHITECTURE.md) §2.2。
+- 模型调用快照的格式、存储与轮转统一见[ARCHITECTURE.md](ARCHITECTURE.md) §8。
 
 ## 2. 干净环境
 

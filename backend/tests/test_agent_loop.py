@@ -272,3 +272,41 @@ def test_stop_hook_can_continue_turn(recorder, monkeypatch) -> None:
     assert client.calls[1]["messages"][-1] == {"role": "user", "content": "请补充结果"}
     assert events[-1]["state"] == "success"
     assert replay.load_replay(recorder.db, "s1")["turns"][0]["final_text"] == "完整结果"
+
+
+@pytest.mark.parametrize("limit", [0, 1, 40])
+def test_while_loop_step_limit(recorder, monkeypatch, limit) -> None:
+    """持续要求续轮时恰好调用limit次，不多发一次模型请求。"""
+    from app.agent import hooks
+
+    seen = []
+    def continue_turn(context):
+        seen.append(context["steps"])
+        return "继续"
+    monkeypatch.setitem(hooks._registry, "Stop", [continue_turn])
+    client = FakeClient([[{"type": "text_delta", "text": "还未结束"}]] * limit)
+    deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
+                    history=[{"role": "user", "content": "继续执行"}], max_steps=limit)
+    events = _run(deps)
+    assert len(client.calls) == limit
+    assert seen == list(range(1, limit + 1))
+    assert events[-1]["state"] == "failed"
+    assert sum(e["type"] == "turn_completed" for e in events) == 1
+    assert any(e["type"] == "error" and str(limit) in e["message"] for e in events)
+
+
+def test_while_loop_last_allowed_step_can_succeed(recorder, monkeypatch) -> None:
+    """第40步正常结束仍成功；步数限制不是无条件末步失败。"""
+    from app.agent import hooks
+
+    monkeypatch.setitem(hooks._registry, "Stop", [
+        lambda context: "继续" if context["steps"] < 40 else None,
+    ])
+    client = FakeClient([[{"type": "text_delta", "text": "输出"}]] * 40)
+    deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
+                    history=[{"role": "user", "content": "执行"}])
+    events = _run(deps)
+    assert deps.max_steps == 40
+    assert len(client.calls) == 40
+    assert events[-1]["state"] == "success"
+    assert not any(e["type"] == "error" for e in events)

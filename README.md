@@ -22,7 +22,7 @@ npm run dev
 
 | 机制                 | 本项目实现                                                                        | 代码文件                                                                                                                                              |
 | ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Agent Loop      | run\_turn 进行While True循环；无工具则结束；工具错误回填，模型错误以failed收口                         | [agent/loop.py](./backend/app/agent/loop.py)、[agent/llm.py](./backend/app/agent/llm.py)、[agent/model\_call.py](./backend/app/agent/model_call.py) |
+| 1. Agent Loop      | run\_turn使用while True，最多40个模型步；无工具且Stop无注入则结束；工具错误回填，模型错误以failed收口                         | [agent/loop.py](./backend/app/agent/loop.py)、[agent/llm.py](./backend/app/agent/llm.py)、[agent/model\_call.py](./backend/app/agent/model_call.py) |
 | 2. Tool Use        | TOOLS 定义工具及参数 schema；普通工具由 TOOL\_HANDLERS 分发；todo\_write 和 subtask 由主循环单独处理。 | [agent/tools.py](./backend/app/agent/tools.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
 | 3. Permission      | evaluate返回allow/deny/ask；build/edit/yolo；硬拒优先，审批决定回填模型                       | [agent/permission\_service.py](./backend/app/agent/permission_service.py)、[sessions/approvals.py](./backend/app/sessions/approvals.py)            |
 | 4. Hooks           | Pre/Post记录工具日志；Stop可注入续轮；UserPromptSubmit仅预留，权限独立于hook                       | [agent/hooks.py](./backend/app/agent/hooks.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
@@ -38,7 +38,7 @@ npm run dev
 - 运行：同会话单turn，跨会话可并行；工具逐个执行；停止在检查点生效，不强杀命令。
 - 状态：mode、权限规则全项目共享；事件经同一Queue输出SSE，断线不取消后台turn。
 - 复用：发送/重跑共用turn装配；主/子共用模型调用记录与审批等待，循环和工具范围独立。
-- Web后端与CLI参考脚本各自使用目录内的依赖配置；根目录仅作导航。上述未接通项为当前源码状态，完整待核对清单见[交接文档](session-handoff.md)。
+- Web后端与CLI参考脚本各自使用目录内的依赖配置；根目录仅作导航。上述未接通项为当前源码状态，完整待核对清单见[交接文档](docs/session-handoff.md)。
 
 ## 2. 对话数据存储
 
@@ -46,24 +46,28 @@ npm run dev
 
 位置：backend/data/app.db；SQLAlchemy + SQLite/WAL。实现：sessions/store.py、recorder.py、replay.py。
 
-| 表              | 保存内容                                                |
-| -------------- | --------------------------------------------------- |
-| session        | 标题、模型、时间、软删标记、输入/输出token累计                          |
-| message        | 用户/助手消息；turn\_id分轮，sequence排序                       |
-| part           | 正文、工具参数/状态/结果、子助手、任务板、错误                            |
-| session\_entry | turn工时/用量、approval请求/决定、compaction摘要/边界、context模型快照 |
+| 表 | 结构与职责 |
+| --- | --- |
+| session | id、title、创建/更新时间、time_archived软删标记 |
+| message | session_id、sequence、时间；data保存role、modelId、parentID、metadata.turnId等元信息 |
+| part | message_id、session_id、消息内sequence、时间；data保存text/tool/subtask/todo/error内容 |
+| session_entry | session_id、type、时间、data；保存turn工时/用量、approval、compaction、context事实，支持同ID更新 |
+
+- 用户和助手正文都只存text part；message不保存正文。
+- 一个turn包含一次用户输入及后续多个模型步；每个模型步创建一条assistant message，轮次通过metadata.turnId关联。
+- 工具part保存callID、tool、state（input/status/output）；同一次调用更新同一part，顺序不变。
+- session的模型信息从context记录读取，用量从turn记录聚合，不再保存独立模型/用量累计列。
 
 1. **写入**
-   - 首条请求创建会话；用户消息立即保存。
-   - 每模型步开始建assistant行，结束写整段正文；流式delta不逐字落库。
-   - 工具按同一part更新状态；sequence首次分配，更新不变；事实正常只追加。
-   - turn结束保存状态/工时/用量；active\_ms排除审批等待，主/子循环用量一起累计。
+   - 首条请求创建会话；用户message与text part在同一事务保存。
+   - 每模型步开始建立assistant message，结束时保存整段正文；流式delta不逐字落库。
+   - turn结束保存状态、工时和用量；active_ms排除审批等待，主/子循环用量共同累计。
 2. **读取与重跑**
-   - load\_replay：按turn分组，末条正文为最终回复；审批按request\_id取最新状态。
-   - load\_history：与load\_replay共用消息/部件查询；重建模型messages、补齐工具往返、按压缩边界裁剪。
-   - regenerate：保留最后用户消息，删除旧回复/该轮事实后重跑并重算用量；不撤销文件/命令操作。
+   - load_replay：按turn组装界面回放，末条正文作为最终回复；审批按request_id取最新状态。
+   - load_history：读取消息/部件，重建模型messages和工具往返，按压缩边界裁剪。
+   - regenerate：保留最后用户message/text part、更新轮次标签，删除旧轮助手与事实后重跑；不撤销文件/命令操作。
 
-**不迁移schema**：改models.py表结构 → 删除backend/data/ → 重启建表。
+**不迁移schema**：表结构变更后停服务，仅清理已批准的app.db及-wal/-shm，再重启建表；保留workspace、权限规则和其他文件。
 
 ### 2.2 model-io：模型调用快照
 

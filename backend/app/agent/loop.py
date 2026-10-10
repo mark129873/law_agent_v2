@@ -115,13 +115,20 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
             async for compact_event in maybe_compact(deps):
                 yield compact_event
 
-        for _step in range(deps.max_steps):
+        steps = 0
+        while True:
+            # 与原步数边界一致：只有还需续轮时检查，末步正常结束仍算成功。
+            if steps >= deps.max_steps:
+                yield {"type": "error", "message": f"达到单轮步数上限 {deps.max_steps}"}
+                state = "failed"
+                break
             # ---- 检查点：停止 ----
             if deps.stop_flag():
                 stop_requested = True
                 break
 
             # ---- LLM 流式调用（一个模型步） ----
+            steps += 1
             message_id = deps.recorder.step_message()
             try:
                 with record_model_step(deps, deps.system_prompt, deps.history, deps.tools) as reply:
@@ -174,7 +181,7 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
             # ---- 无工具调用：本轮结束（Stop hook 可注入内容强制续轮） ----
             if not tool_uses:
                 deps.history.append({"role": "assistant", "content": text_acc})
-                injection = hooks.trigger("Stop", {"turn_id": turn_id, "steps": _step + 1})
+                injection = hooks.trigger("Stop", {"turn_id": turn_id, "steps": steps})
                 if injection:
                     deps.history.append({"role": "user", "content": injection})
                     continue
@@ -198,10 +205,6 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 break
             if tool_results:
                 deps.history.append({"role": "user", "content": tool_results})
-        else:
-            # 步数用尽（安全阀）
-            yield {"type": "error", "message": f"达到单轮步数上限 {deps.max_steps}"}
-            state = "failed"
     except Exception as exc:  # 循环级兜底：任何意外都不允许吞掉收口事件
         logger.exception("turn 循环异常")
         yield {"type": "error", "message": str(exc)}

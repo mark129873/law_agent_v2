@@ -223,5 +223,12 @@
     "scope": "按ZCode最小四表组织存储；正文统一text part，JSON元信息，保留现有功能；修复运行态回放",
     "evidence": "新10例全过；受影响专项61过；全量101过/3既有平台失败。前端类型/build通过、lint 0错误/3既有警告；真实前后端+假模型浏览器通过发送、任务板、刷新、重跑、审批通过/拒绝/恢复、停止、错误重试。",
     "boundaries": "无付费模型调用；3项PowerShell/Windows路径既有失败保留。非ZCode全功能复制；保留todo/error等项目类型。空库不迁移。"
+  },
+  "harness_architecture_review": {
+    "date": "2026-10-10",
+    "scope": "README四表说明；ARCHITECTURE重写为后端Harness结构与数据流；主循环改while True且保持40模型步语义",
+    "status": "passing",
+    "evidence": "新增4项步数边界通过；隔离空库/假模型全量105通过、3项既有平台失败，原循环复测同3项失败。架构文档相对链接全部存在，diff检查通过。",
+    "boundaries": "未改前端/权限/模型重试；未做真实模型或UI验收；PowerShell缺失与Windows路径差异保留。"
   }
 }
