@@ -84,24 +84,105 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 
 ## 4. 数据与状态归属
 
-### 4.1 会话模型
+### 4.1 SQLite 六表
 
-| 表 | 内容 |
+- 对齐 ZCode `29628c9` 必要子集；定义见 [models.py](../backend/app/models.py)。
+- 时间均为 Unix 毫秒；`data`、`value` 为 JSON 文本。
+- 关系：会话 → 多条消息 → 多个部件；一个 turn 可含多条消息。
+
+#### session：会话
+
+| 字段 | 含义 |
 | --- | --- |
-| session | 会话、项目 ID、目录、标题和时间 |
-| message | role、modelId、parentID、time、tokens、error、anchor.turnId |
-| part | text/tool/compaction；消息内稳定排序 |
-| todo | 当前任务列表，事务全量替换 |
-| turn_usage | 状态、起止时间、总耗时、累计用量 |
-| local_setting | 项目权限模式与规则 |
+| id | 会话 ID，主键 |
+| project_id | 项目 ID；由工作区目录生成 slug |
+| directory | 工作区完整路径 |
+| title | 会话标题 |
+| time_created | 创建时间 |
+| time_updated | 最近更新时间 |
+| time_archived | 归档时间；空表示正常，当前用于软删除 |
 
-- 对齐 ZCode `29628c9` 必要子集；字段清单见 [storage-subset.md](storage-subset.md)。
-  - message/part 的 sequence 从 0 开始；同 scope 更新保留顺序，跨 scope 更新重新分配。
-  - NULL sequence 由上游同款触发器补齐；part.session_id 不额外添加外键。
-- turn 是执行轮次，message.data.anchor.turnId 关联；每轮可有多个助手消息。
-  - 正文只在 text part；模型异常在 message.error；工具失败在 state.error。
-  - 不保留 session_entry、tool_usage、model_usage；不新增会话模型选择。
-- 不迁移测试旧库；重建仅处理数据库，保留工作区。
+#### message：消息元信息
+
+| 字段 | 含义 |
+| --- | --- |
+| id | 消息 ID，主键 |
+| session_id | 所属会话，外键指向 session.id |
+| sequence | 会话内消息顺序，从 0 开始 |
+| time_created | 创建时间 |
+| time_updated | 最近更新时间 |
+| data | 身份、模型、轮次、用量、错误等元信息；不存普通正文 |
+
+- data：`role` 用户/助手；`anchor.turnId` 轮次；`modelId` 模型；`parentID` 对应用户消息。
+  - `time` 消息起止时间；`tokens` 本次主模型用量；`finish` 结束原因；`error` 模型异常。
+  - 压缩消息另有 `synthetic`、`summary`、`semantics`：合成标记、摘要、可见性。
+
+#### part：消息内容部件
+
+| 字段 | 含义 |
+| --- | --- |
+| id | 部件 ID，主键 |
+| message_id | 所属消息，外键指向 message.id |
+| session_id | 所属会话 ID；此列不设外键 |
+| sequence | 消息内部件顺序，从 0 开始 |
+| time_created | 创建时间 |
+| time_updated | 最近更新时间 |
+| data | 部件类型及正文、工具状态或压缩信息 |
+
+- data 按 `type` 区分：
+  - `text`：`text` 正文。
+  - `tool`：`callID` 调用 ID、`tool` 工具名、`state` 参数/状态/结果；失败写 `state.error`。
+  - `compaction`：`auto` 自动压缩、`tail_start_id` 已摘要边界消息 ID、`preCompactTokenCount` / `postCompactTokenCount` 压缩前后 token。
+- 任务板、子助手卡片从工具记录恢复，不另存自定义部件。
+
+#### local_setting：项目配置
+
+| 字段 | 含义 |
+| --- | --- |
+| scope | 作用域；当前为 project |
+| scope_id | 作用域 ID；当前对应 project_id |
+| namespace | 配置分类；当前为 permission |
+| key | 配置项；当前为 mode 或 ruleset |
+| value | 配置 JSON；权限模式或规则集 |
+| schema_version | 配置格式版本；当前为 1 |
+| time_created | 创建时间 |
+| time_updated | 最近更新时间 |
+
+- 联合主键：`scope + scope_id + namespace + key`。
+- mode 保存 build/edit/yolo；ruleset 按 allow/deny/ask 分组，规则使用 toolName/ruleContent。
+- 审批请求/决定只存进程内存，不在此表。
+
+#### todo：当前任务板
+
+| 字段 | 含义 |
+| --- | --- |
+| session_id | 所属会话，外键指向 session.id |
+| position | 任务顺序，从 0 开始 |
+| content | 任务内容 |
+| status | pending 待办 / in_progress 进行中 / completed 完成 |
+| time_created | 创建时间 |
+| time_updated | 最近更新时间 |
+
+- 联合主键：`session_id + position`；每次写入全量替换。
+
+#### turn_usage：轮次状态与用量
+
+| 字段 | 含义 |
+| --- | --- |
+| session_id | 所属会话，外键指向 session.id |
+| turn_id | 本轮执行 ID |
+| user_message_id | 触发本轮的用户消息 ID；可空，无外键 |
+| status | running 运行 / completed 完成 / error 失败 / cancelled 停止 |
+| started_at | 开始时间 |
+| completed_at | 结束时间；运行中为空 |
+| duration_ms | 总耗时，含审批等待；运行中为空 |
+| input_tokens | 本轮累计输入 token |
+| output_tokens | 本轮累计输出 token |
+| cache_creation_input_tokens | 本轮累计缓存写入 token |
+| cache_read_input_tokens | 本轮累计缓存读取 token |
+
+- 联合主键：`session_id + turn_id`；用量含主/子模型，结束时写入。
+- 不保留 session_entry、tool_usage、model_usage；不迁移测试旧库，保留工作区。
 
 ### 4.2 状态存放位置
 
