@@ -22,25 +22,41 @@ npm run dev
 
 主链路：用户输入 → 压缩 → LLM → 权限 → 工具 → tool\_result → 再调 LLM。
 
-| 机制                 | 本项目实现                                                                                       | 代码文件                                                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Agent Loop      | run\_turn 进行While True循环；无工具则结束；工具错误回填，模型错误以failed收口                                        | [agent/loop.py](./backend/app/agent/loop.py)、[agent/llm.py](./backend/app/agent/llm.py)、[agent/model\_call.py](./backend/app/agent/model_call.py) |
-| 2. Tool Use        | TOOLS 定义工具及参数 schema；普通工具由 TOOL\_HANDLERS 分发；todo\_write 和 subtask 由主循环单独处理。                | [agent/tools.py](./backend/app/agent/tools.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
-| 3. Permission      | evaluate返回allow/deny/ask；build/edit/yolo；越界等硬性禁止项，任何模式都不能绕过，批准后把工具结果给模型；拒绝后把拒绝原因给模型，让它决定下一步 | [agent/permission\_service.py](./backend/app/agent/permission_service.py)、[sessions/approvals.py](./backend/app/sessions/approvals.py)            |
-| 4. Hooks           | Pre/Post记录工具日志；Stop可注入续轮；UserPromptSubmit仅预留，权限独立于hook                                      | [agent/hooks.py](./backend/app/agent/hooks.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
-| 5. Task System     | todo\_write整板更新，≤20项、最多1项进行中；保存todo part并发事件；未实现“三轮未更新提醒”                                   | [agent/todo.py](./backend/app/agent/todo.py)                                                                                                      |
-| 6. Subagents       | 独立历史、最多30步、串行、防递归；当前7个同步工具，权限同父级，结果回填父轮                                                     | [agent/subtask.py](./backend/app/agent/subtask.py)                                                                                                |
-| 7. Context Compact | turn开始执行microcompact → LLM摘要；阈值与恢复边界见§3                                                     | [agent/compact.py](./backend/app/agent/compact.py)                                                                                                |
-| 8. Skill           | load\_skill按目录读SKILL.md全文；有目录枚举函数，但尚未注入系统提示词                                                | [agent/skills.py](./backend/app/agent/skills.py)                                                                                                  |
-| 9. Goal Loop       | **Web后端未实现**；独立完成度判断器、/goal自动续轮仅在参考脚本中                                                      | [scripts\_mini\_harness/mini\_harness.py](./scripts_mini_harness/mini_harness.py)                                                                 |
+| 机制                 | 本项目实现                                                                                                        | 代码文件                                                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Agent Loop      | run\_turn 进行While True循环；无工具则结束；工具错误回填，模型错误以failed收口                                                         | [agent/loop.py](./backend/app/agent/loop.py)、[agent/llm.py](./backend/app/agent/llm.py)、[agent/model\_call.py](./backend/app/agent/model_call.py) |
+| 2. Tool Use        | TOOLS 定义工具及参数 schema；普通工具由 TOOL\_HANDLERS 分发；todo\_write 和 subtask 由主循环单独处理。                                 | [agent/tools.py](./backend/app/agent/tools.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
+| 3. Permission      | 主循环check\_permission根据权限模式build/edit/yolo, 返回allow/deny/ask；命中危险命令清单或越界时deny，批准后把工具结果给模型；拒绝后把拒绝原因给模型，让它决定下一步 | [agent/permission\_service.py](./backend/app/agent/permission_service.py)、[sessions/approvals.py](./backend/app/sessions/approvals.py)            |
+| 4. Hooks           | Pre/Post记录工具日志；Stop可注入续轮；UserPromptSubmit仅预留，权限独立于hook                                                       | [agent/hooks.py](./backend/app/agent/hooks.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
+| 5. Task System     | todo\_write整板更新，≤20项、最多1项进行中；保存todo part并发事件；未实现“三轮未更新提醒”                                                    | [agent/todo.py](./backend/app/agent/todo.py)                                                                                                      |
+| 6. Subagents       | 独立历史、最多30步、串行、防递归；当前7个同步工具，权限同父级，结果回填父轮                                                                      | [agent/subtask.py](./backend/app/agent/subtask.py)                                                                                                |
+| 7. Context Compact | turn开始执行microcompact → LLM摘要；阈值与恢复边界见§3                                                                      | [agent/compact.py](./backend/app/agent/compact.py)                                                                                                |
+| 8. Skill           | load\_skill按目录读SKILL.md全文；有目录枚举函数，但尚未注入系统提示词                                                                 | [agent/skills.py](./backend/app/agent/skills.py)                                                                                                  |
+| 9. Goal Loop       | **Web后端未实现**；独立完成度判断器、/goal自动续轮仅在参考脚本中                                                                       | [scripts\_mini\_harness/mini\_harness.py](./scripts_mini_harness/mini_harness.py)                                                                 |
 
 - 工具：bash/read\_file/write\_file/edit\_file/glob/delete\_file + todo\_write/load\_skill/subtask。
   - 子助手仅同步工具：6个基础工具 + load\_skill；不含todo/subtask。
-  - 文件读/写/改/删经safe\_path限制于workspace；PowerShell仅固定cwd，无系统沙箱，glob未过同等路径检查。
-- 运行：同会话单turn，跨会话可并行；工具逐个执行；停止在检查点生效，不强杀命令。
-- 状态：mode、权限规则全项目共享；事件经同一Queue输出SSE，断线不取消后台turn。
-- 复用：发送/重跑共用turn装配；主/子共用模型调用记录与审批等待，循环和工具范围独立。
-- Web后端与CLI参考脚本各自使用目录内的依赖配置；根目录仅作导航。上述未接通项为当前源码状态，完整待核对清单见[交接文档](session-handoff.md)。
+  - 文件读/写/改/删经safe\_path限制于workspace
+- check\_permission权限判断:
+
+| 判断结果  | 含义                      |
+| ----- | ----------------------- |
+| allow | 允许，直接执行工具               |
+| deny  | 拒绝，不执行，将拒绝原因回填模型        |
+| ask   | 等待用户审批；批准后执行，拒绝则将原因回填模型 |
+
+| 权限模式        | build 变更前确认 | edit 自动编辑 | yolo 完全访问 |
+| ----------- | ----------- | --------- | --------- |
+| 读取工作区文件     | allow       | allow     | allow     |
+| 写入、编辑工作区文件  | ask         | allow     | allow     |
+| 删除文件、执行一般命令 | ask         | ask       | allow     |
+| 命中硬拒规则      | deny        | deny      | deny      |
+
+| ask选项                                        | 含义                       | 是否保存规则                    |
+| -------------------------------------------- | ------------------------ | ------------------------- |
+| Allow once（允许一次）                             | 只批准当前这次工具调用              | 不保存长期规则                   |
+| Always allow in this conversation（在此对话中始终允许） | 批准当前调用，后续在当前会话中匹配的操作不再询问 | 只保存在内存，不写入项目规则；重启或新建会话不保留 |
+| Deny（拒绝）                                     | 不执行当前调用，拒绝原因回填模型         | 不添加永久拒绝规则                 |
 
 ## 2. 对话数据存储
 
