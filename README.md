@@ -8,11 +8,11 @@
 
 ```bash
 uv run --no-project start.py
-# 或者分开启动前后端
-cd backend
+# 或者分前后端启动
+cd backend # 新开终端启动后端服务
 uv sync
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8100
-cd frontend
+cd frontend # 新开终端启动前端服务
 npm run dev
 ```
 
@@ -28,7 +28,7 @@ npm run dev
 | 2. Tool Use        | TOOLS 定义工具及参数 schema；普通工具由 TOOL\_HANDLERS 分发；todo\_write 和 subtask 由主循环单独处理。                                 | [agent/tools.py](./backend/app/agent/tools.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
 | 3. Permission      | 主循环check\_permission根据权限模式build/edit/yolo, 返回allow/deny/ask；命中危险命令清单或越界时deny，批准后把工具结果给模型；拒绝后把拒绝原因给模型，让它决定下一步 | [agent/permission\_service.py](./backend/app/agent/permission_service.py)、[sessions/approvals.py](./backend/app/sessions/approvals.py)            |
 | 4. Hooks           | Pre/Post记录工具日志；Stop可注入续轮；UserPromptSubmit仅预留，权限独立于hook                                                       | [agent/hooks.py](./backend/app/agent/hooks.py)、[agent/loop.py](./backend/app/agent/loop.py)                                                       |
-| 5. Task System     | todo\_write整板更新，≤20项、最多1项进行中；保存todo part并发事件；未实现“三轮未更新提醒”                                                    | [agent/todo.py](./backend/app/agent/todo.py)                                                                                                      |
+| 5. Task System     | todo\_write整板更新，≤20项、最多1项进行中；保存todo表；未实现“三轮未更新提醒”                                                    | [agent/todo.py](./backend/app/agent/todo.py)                                                                                                      |
 | 6. Subagents       | 独立历史、最多30步、串行、防递归；当前7个同步工具，权限同父级，结果回填父轮                                                                      | [agent/subtask.py](./backend/app/agent/subtask.py)                                                                                                |
 | 7. Context Compact | turn开始执行microcompact → LLM摘要；阈值与恢复边界见§3                                                                      | [agent/compact.py](./backend/app/agent/compact.py)                                                                                                |
 | 8. Skill           | load\_skill按目录读SKILL.md全文；有目录枚举函数，但尚未注入系统提示词                                                                 | [agent/skills.py](./backend/app/agent/skills.py)                                                                                                  |
@@ -74,8 +74,8 @@ part表
 - data(正文text、工具tool或压缩信息compaction)
 
 local\_setting表
-- 项目权限模式:{"mode":"edit/edit/yolo"}
-- 规则rule\_set:{"allow":\[{"toolName":"bash","ruleContent":"git status"}],"deny":\[{"toolName":"delete\_file"}],"ask":\[{"toolName":"write\_file"}]}
+- 项目权限模式:{"mode":"build/edit/yolo"}
+- 规则ruleset:{"allow":\[{"toolName":"bash","ruleContent":"git status"}],"deny":\[{"toolName":"delete\_file"}],"ask":\[{"toolName":"write\_file"}]}
 
 todo表
 - 联合主键(session_id, 顺序position), 任务内容content,  时间
@@ -172,6 +172,6 @@ delete_file(移入 rubbish/) / todo_write / load_skill / subtask(子助手)
 
 ```bash
 uv sync
-uv run harness.py
+uv run mini_harness.py
 ```
 
