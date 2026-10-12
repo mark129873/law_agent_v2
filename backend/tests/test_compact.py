@@ -124,7 +124,6 @@ def test_summarize_and_boundary(store_db) -> None:
     user_row = store.save_user_message(store_db, "s1", "u2", "第二轮问题", "t1")
 
     history = replay.load_history(store_db, "s1")
-    history.append({"role": "user", "content": "第二轮问题"})
     prior_tokens = estimate_history_tokens(history)
     assert prior_tokens > context_budget(_budget_stub())
 
@@ -198,7 +197,6 @@ def test_compact_circuit_breaker(store_db) -> None:
     async def scenario():
         for round_no in range(4):
             history = replay.load_history(store_db, "s1")
-            history.append({"role": "user", "content": "第二轮问题"})
             deps = type("Deps", (), {
                 "history": history,
                 "settings": _budget_stub(),
@@ -214,4 +212,28 @@ def test_compact_circuit_breaker(store_db) -> None:
         assert boom.calls == 3  # 第 4 次被熔断，不再调用
 
     asyncio.run(scenario())
+    compact.reset_failure_count("s1")
+
+
+@pytest.mark.parametrize("summary", ["", " \t\r\n "])
+def test_empty_summary_does_not_commit_boundary_or_drop_history(store_db, summary):
+    """空白响应等同失败；数据库和当前模型上下文都保留旧消息，可继续重试。"""
+    _seed_long_history(store_db)
+    current = store.save_user_message(store_db, "s1", "u2", "当前用户原文", "t1")
+    history = replay.load_history(store_db, "s1")
+    before = json.loads(json.dumps(history))
+    compact.reset_failure_count("s1")
+    deps = type("Deps", (), {
+        "history": history, "settings": _budget_stub(), "last_input_tokens": None,
+        "client": SummaryClient(summary),
+        "recorder": type("R", (), {"session_id": "s1", "turn_id": "t1", "db": store_db,
+                                   "first_user_sequence": current.sequence})(),
+    })()
+    async def scenario():
+        return [event async for event in compact.maybe_compact(deps)]
+    assert asyncio.run(scenario()) == []
+    assert compactions(store_db, "s1") == []
+    assert deps.history == before
+    assert replay.load_history(store_db, "s1") == before
+    assert compact._failure_counts["s1"] == 1
     compact.reset_failure_count("s1")

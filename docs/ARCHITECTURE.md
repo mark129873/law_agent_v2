@@ -52,12 +52,12 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 1. 新建会话只返回 draft ID；首次发送才创建 session。
 2. `POST /api/sessions/{id}/turn` 校验模型配置和同会话运行态；提交的模式保存到共享执行状态。
 3. 创建独立数据库Session、TurnRecorder与停止信号；`load_history`重建此前模型历史，追加当前用户输入。
-4. `_turn_sse_response`装配TurnDeps，创建后台pump和Queue；审批与主循环共用该Queue。
+4. `_turn_sse_response`装配TurnDeps，创建后台pump和Queue；审批与主循环共用该Queue。装配成功后由pump接管资源；此前任一步失败都注销turn并关闭独立数据库Session。
 5. `begin_turn`保存用户message/text part、turn_usage 运行记录，发出turn_started。
 
 ### 3.2 模型与工具循环
 
-- 进入循环前执行一次压缩检查。
+- 每个模型步前检查预算，工具结果增长也计入；仅压缩当前轮之前的历史，当前用户原文与本轮工具配对保留。
 - `while True`配合显式计数：主循环最多40个模型步，包含Stop注入后的续轮；不是40次失败重试。子助手保留独立30步限制。
 - 每步：
   1. 检查步数和停止信号；创建assistant message。
@@ -66,7 +66,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
   4. 无工具：加入assistant历史；Stop返回注入内容则续轮，否则成功结束。
   5. 有工具：加入assistant的text/tool_use块，逐个执行工具，将tool_result作为user内容追加，再调模型。
 - 第40步正常结束仍为success；若仍需第41步，发error并以failed结束。
-- 工具返回`Error:`作为失败结果回填，模型可继续处理；模型异常直接failed，不增加自动重试。
+- 工具返回`Error:`作为失败结果回填；明确上下文超限且未输出内容时，安全缩减历史后最多重试一次，失败请求也计入40步；其他模型异常直接failed。
 - 默认hooks只注册PreToolUse/PostToolUse日志；Stop保留注入扩展点，当前默认无注入；UserPromptSubmit尚未接入主链路。
 
 ### 3.3 工具执行分支
@@ -219,14 +219,14 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 
 ### 压缩与恢复
 
-1. 仅turn开始检查预算：窗口−输出预留−安全buffer，默认预留32K+13K。
-2. microcompact将较旧的完成/失败工具输出改成占位符，默认保留最近5条；随后重载历史。
-3. 仍超预算则摘要此前历史，保留当前用户请求原文；合成 user message/text 保存摘要，compaction.tail_start_id 保存最后被摘要的消息 ID。
-4. 本轮内存变为“摘要+当前请求”；下次load_history读取摘要及边界后的消息。
+1. 每步检查窗口−输出预留−安全buffer；采用字符估算与最近真实用量加历史增量的较大值。
+2. microcompact仅处理当前轮之前的工具输出，保留最近5条；按调用ID同步旧前缀，不重载或截断活跃轮。
+3. 仍超预算则摘要旧前缀，保留当前用户原文及完整活跃轮；边界始终位于当前用户消息之前。
+4. 空/空白、无缩减或失败摘要不提交边界；120秒超时，连续3次失败熔断。
+5. 明确上下文超限错误可强制压缩并重试一次；未缩减、当前轮自身过大或仍超限时明确失败，不重复执行工具或无限总结。
 
 - 摘要不会删除旧消息；microcompact会覆盖旧工具输出，没有额外归档副本。
-- 摘要超时120秒；连续失败3次后跳过摘要，失败计数只在内存中。
-- 入口未继承上一turn真实usage，通常按字符/4估算；尚无prompt_too_long专项重试，摘要调用未计入model-io/用量。
+- 入口未继承上一turn真实usage；摘要调用未计入model-io/用量，本轮未扩展这些范围。
 
 ## 6. 事件出口与界面边界
 
@@ -234,7 +234,8 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - SSE只消费该Queue并转成帧，每15秒心跳；不是广播总线或持久事件日志。
 - [api/client.ts](../frontend/src/api/client.ts)解析POST响应流；[useSessionStream.ts](../frontend/src/hooks/useSessionStream.ts)归约为实时TurnData。
 - 事件按生命周期、文本、工具、todo/subtask、审批、用量/压缩分组；契约见[types.ts](../frontend/src/types.ts)。
-- 流中工具输出只给400字符预览；流结束后重新GET详情，以数据库回放替换临时状态。
+- 流中工具输出只给400字符预览；流结束后重新GET详情，以数据库回放替换临时状态。GET按请求序号和流代数校验，仅成功取得对应终态回放才清实时轮次；旧响应不能覆盖新turn。
+- 活跃SSE中的审批成功只刷新权限，审批/后续文本继续由同一流归约；无实时流时才刷新审批回放。
 - 刷新/断线不取消后台turn，但新页面只回放已保存内容，不重新接入原SSE；其他标签同样通过查询回看。
 - 当前tool_started在执行结束后才发；subtask_delta按子模型步聚合发送，不能写成逐token实时推送。
 
@@ -247,9 +248,10 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - 规则使用 toolName/ruleContent；无多项目界面。旧权限 JSON 不读取、不迁移。
 
 - evaluate读取共享模式/规则，返回allow/deny/ask。
+- 命令免批仅接受单行字面量与已知只读参数；换行、展开/子表达式、复杂语法及未知 Git 选项转审批，不能靠根词免批。
 - 判定顺序：硬拒→yolo→deny规则→ask规则→allow规则→edit/build默认策略；yolo跳过普通规则，但不跳过硬拒。
 - ask 时先注册进程内槽位，再发 approval_request；决定更新内存事件并发 approval_resolved。刷新保留选项，重启不恢复审批历史。
-- 批准后执行工具；拒绝理由作为Error工具结果回填；审批等待计入总耗时。
+- 审批等待同时监听停止；停止撤销待决请求，迟到批准失效，主/子工具执行前复查停止；拒绝理由作为Error工具结果回填。
 - 普通文件工具经safe_path限制于workspace；glob未使用同等检查，PowerShell仅固定cwd，没有系统级隔离。
 
 ### 结束与恢复
@@ -264,7 +266,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 | 后端重启 | 不恢复执行；无收口事实且无运行登记的轮次回放为stopped |
 | regenerate | 保留末条用户message/text part、改挂新turn；删除旧轮助手及事实，再装配执行 |
 
-- 停止是协作式信号，不强杀已启动命令；审批等待尚未接停止信号，子助手流中也不逐delta检查停止。
+- 停止是协作式信号，不强杀已启动命令；审批等待立即退出，主/子工具在授权后再次检查停止。
 - regenerate不撤销文件/命令副作用；删除旧turn事实后，用量聚合自然排除旧轮。
 - 审批事件不入数据库；重启后不会回放失效审批。子助手刷新时仍禁止 fullAccess。
 

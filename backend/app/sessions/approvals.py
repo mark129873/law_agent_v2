@@ -47,6 +47,7 @@ def register(
     input_data: dict | None = None,
     options: list[dict] | None = None,
     full_access: bool = False,
+    stop_event: asyncio.Event | None = None,
 ) -> dict:
     """登记一个待决审批（携带 tool/input/options 供 resolve 侧派生规则/切模式）。"""
     slot = {
@@ -57,6 +58,7 @@ def register(
         "input": input_data,
         "options": options or [],
         "full_access": full_access,
+        "stop_event": stop_event,
     }
     _pending[request_id] = slot
     return slot
@@ -64,14 +66,21 @@ def register(
 
 def get_request(request_id: str) -> dict | None:
     """取待决审批的登记信息（不弹出；resolve 后即不可见）。"""
-    return _pending.get(request_id)
+    slot = _pending.get(request_id)
+    # stop 与批准可能同时到达：先检查共享停止信号，禁止迟到授权产生副作用。
+    if slot is not None and slot.get("stop_event") is not None and slot["stop_event"].is_set():
+        _pending.pop(request_id, None)
+        slot["event"].set()
+        return None
+    return slot
 
 
 def resolve(request_id: str, approved: bool, feedback: str | None = None) -> bool:
     """提交决定并唤醒等待方；取出式（重复提交/未知 id 返回 False）。"""
-    slot = _pending.pop(request_id, None)
+    slot = get_request(request_id)
     if slot is None:
         return False
+    _pending.pop(request_id, None)
     slot["approved"] = approved
     slot["feedback"] = feedback
     slot["event"].set()
@@ -98,6 +107,8 @@ def build_options(tool_name: str, tool_input: dict, allow_full_access: bool = Tr
 async def authorize_tool(deps, tool_name: str, tool_input: dict, *,
                          data_dir=None, allow_full_access: bool = True) -> str | None:
     """共用权限闸门：None放行，拒绝返回Error；审批等待包含在总耗时中。"""
+    if deps.stop_flag():
+        return "Error: 操作已停止"
     result = evaluate(data_dir, tool_name, tool_input)
     decision, reason = result["decision"], result["reason"]
     if decision == "allow":
@@ -108,6 +119,8 @@ async def authorize_tool(deps, tool_name: str, tool_input: dict, *,
     # 主循环沿用默认选项；子助手明确禁用完全访问，避免复用时丢失限制。
     options = {} if allow_full_access else {"allow_full_access": False}
     outcome = await deps.approver(tool_name, tool_input, reason or "该操作需要确认", **options)
+    if deps.stop_flag():
+        return "Error: 操作已停止"
     if not outcome["approved"]:
         return f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or reason}"
     return None
@@ -120,15 +133,19 @@ class InteractiveApprover:
     （ZCode：origin=subagent 的请求不投放 fullAccess）。
     """
 
-    def __init__(self, db, session_id: str, recorder, queue: asyncio.Queue) -> None:
+    def __init__(self, db, session_id: str, recorder, queue: asyncio.Queue,
+                 stop_event: asyncio.Event | None = None) -> None:
         self.db = db
         self.session_id = session_id
         self.recorder = recorder  # 读取当前 turn_id
         self.queue = queue
+        self.stop_event = stop_event
 
     async def __call__(
         self, tool_name: str, tool_input: dict, reason: str, *, allow_full_access: bool = True
     ) -> dict:
+        if self.stop_event is not None and self.stop_event.is_set():
+            return {"approved": False, "denial_reason": "操作已停止"}
         request_id = new_id()
         options = build_options(tool_name, tool_input, allow_full_access)
 
@@ -137,7 +154,7 @@ class InteractiveApprover:
             'input': tool_input, 'reason': reason, 'status': 'requested', 'time': now_ms(),
             'options': options, 'full_access': allow_full_access}
         # 先注册等待槽，再发布事件，避免前端快速回应落在注册之前。
-        slot = register(request_id, tool_name, tool_input, options, allow_full_access)
+        slot = register(request_id, tool_name, tool_input, options, allow_full_access, self.stop_event)
         # 2. 推审批请求给前端（循环阻塞中，由这里直推队列）
         await self.queue.put(
             {
@@ -151,16 +168,26 @@ class InteractiveApprover:
             }
         )
 
-        # 3. 挂起等待（包含在 turn 总耗时内）
-        await slot["event"].wait()
-        approved = slot["approved"]
+        # 同时等待审批和停止；finally 撤销槽位及等待任务，取消协程也不留幽灵审批。
+        waits = [asyncio.create_task(slot["event"].wait())]
+        if self.stop_event is not None:
+            waits.append(asyncio.create_task(self.stop_event.wait()))
+        approved = False
+        try:
+            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+            stopped = self.stop_event is not None and self.stop_event.is_set()
+            approved = slot["approved"] and not stopped
+        finally:
+            _pending.pop(request_id, None)
+            for task in waits:
+                task.cancel()
+            await asyncio.gather(*waits, return_exceptions=True)
+            record = _events.get(self.session_id, {}).get(request_id)
+            if record is not None:
+                record["status"] = "approved" if approved else "denied"
+            self.queue.put_nowait({"type": "approval_resolved", "request_id": request_id,
+                                   "approved": approved})
         feedback = slot.get("feedback")
-
-        _events[self.session_id][request_id]['status'] = 'approved' if approved else 'denied'
-        # 5. 通知前端结果（审批卡片翻转状态）
-        await self.queue.put(
-            {"type": "approval_resolved", "request_id": request_id, "approved": approved}
-        )
         logger.info("审批完成 request_id=%s tool=%s approved=%s", request_id, tool_name, approved)
 
         # 拒绝时把用户反馈拼进喂回模型的理由（ZCode buildPermissionDeniedContent 同语义）

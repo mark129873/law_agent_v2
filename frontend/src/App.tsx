@@ -20,7 +20,7 @@ import { Sidebar } from './components/Sidebar'
 import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
 import { ApiError, createSession, getPermissionState, getSessionDetail, stopTurn, type ExecutionDraft, type PermissionState } from './api/client'
 import { ShellContext, useShell } from './ShellContext'
-import { useSessionStream } from './hooks/useSessionStream'
+import { useSessionStream, type StreamCompletion } from './hooks/useSessionStream'
 import { ArrowRight, FileText, ListChecks, SidebarSimple, SquaresFour, TerminalWindow, UsersThree } from '@phosphor-icons/react'
 import './workspace.css'
 import type { SessionDetail, SessionItem } from './types'
@@ -237,19 +237,28 @@ function SessionView({
     regenerate,
     clearTurn,
     pendingApproval,
+    getStreamGeneration,
+    hasActiveStream,
+    getCompletion,
   } = useSessionStream(sessionId)
+  // 请求编号区分同一轮中的多次GET；流代数区分发送/重跑前后的GET。
+  const detailRequestRef = useRef(0)
 
   // 挂载（含刷新/直链进入）：拉全量回放。
   // 404 分两种：本应用创建的草稿（还没有落盘内容，等首条消息）留在空对话态；
   // 其余（手输未知地址、已删除会话）回首页，不允许凭空"复活"会话 id
   useEffect(() => {
     let cancelled = false
+    const request = ++detailRequestRef.current
+    const generation = getStreamGeneration()
+    const isCurrent = () => !cancelled && request === detailRequestRef.current
+      && generation === getStreamGeneration()
     getSessionDetail(sessionId)
       .then((d) => {
-        if (!cancelled) setDetail(d)
+        if (isCurrent()) setDetail(d)
       })
       .catch((e) => {
-        if (cancelled) return
+        if (!isCurrent()) return
         const knownDraft = e instanceof ApiError && e.status === 404
           && draftIdsRef.current?.has(sessionId)
         if (!knownDraft) navigate('/', { replace: true })
@@ -257,25 +266,42 @@ function SessionView({
     return () => {
       cancelled = true
     }
-  }, [sessionId, navigate, draftIdsRef])
+  }, [sessionId, navigate, draftIdsRef, getStreamGeneration])
 
-  /** turn 收口后：重新拉详情（耗时等切换为落盘权威值）并清掉实时轮次；同步执行状态 */
-  const refreshAfterTurn = useCallback(async () => {
+  /** 拉取回放前记录身份，等待期间若已有新请求/新turn就丢弃旧响应。 */
+  const refreshDetail = useCallback(async (completion?: StreamCompletion) => {
+    const generation = completion?.generation ?? getStreamGeneration()
+    if (generation !== getStreamGeneration()) return
+    const request = ++detailRequestRef.current
     try {
-      setDetail(await getSessionDetail(sessionId))
+      const next = await getSessionDetail(sessionId)
+      if (request !== detailRequestRef.current || generation !== getStreamGeneration()) return
+      setDetail(next)
+      // 必须拿到对应turn的终态才用回放替换；GET失败时保留最后实时快照。
+      if (completion && next.turns.some((turn) => turn.turn_id === completion.turnId && turn.state !== 'running')) {
+        clearTurn(completion)
+      }
     } catch {
-      /* draft 会话首条消息失败时详情仍不存在，忽略 */
+      /* 草稿尚未落盘或网络失败：不清空用户已经看到的内容。 */
     }
-    clearTurn()
-    refreshPermission()
-  }, [sessionId, clearTurn, refreshPermission])
+  }, [sessionId, clearTurn, getStreamGeneration])
 
-  /** 发送消息：模式随提交生效；流结束后刷新详情与列表 */
+  const refreshAfterTurn = useCallback((completion: StreamCompletion) => {
+    void refreshDetail(completion)
+    refreshPermission()
+  }, [refreshDetail, refreshPermission])
+
+  /** 活跃流继续拥有审批状态；此时不拉回放，更不能清掉下一项审批。 */
+  const refreshAfterApproval = useCallback(() => {
+    refreshPermission()
+    // 审批HTTP应答也可能晚于流结束；此时取当前身份收尾，避免覆盖结束GET后留下双份结果。
+    if (!hasActiveStream()) void refreshDetail(getCompletion())
+  }, [refreshPermission, hasActiveStream, refreshDetail, getCompletion])
+
+  /** 发送消息：模式随提交生效；结束时带着这次流的身份刷新。 */
   const handleSend = useCallback(
     (text: string, execution: ExecutionDraft) => {
-      void send(text, () => {
-        void refreshAfterTurn()
-      }, execution)
+      void send(text, refreshAfterTurn, execution)
     },
     [send, refreshAfterTurn],
   )
@@ -287,9 +313,7 @@ function SessionView({
 
   /** 错误重试 = 重新生成最后一轮（保留用户消息重跑） */
   const handleRetry = useCallback(() => {
-    void regenerate(() => {
-      void refreshAfterTurn()
-    })
+    void regenerate(refreshAfterTurn)
   }, [regenerate, refreshAfterTurn])
 
   return (
@@ -306,7 +330,7 @@ function SessionView({
         onSend={handleSend}
         onStop={handleStop}
         onRegenerate={handleRetry}
-        onApprovalResolved={() => void refreshAfterTurn()}
+        onApprovalResolved={refreshAfterApproval}
         onOpenSubtask={setActiveSubtask}
       />
 

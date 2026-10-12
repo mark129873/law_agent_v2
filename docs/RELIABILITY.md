@@ -39,7 +39,7 @@
 | 改动 | 检查 |
 |---|---|
 | 后端 | backend/：uv run pytest -q |
-| 前端 | frontend/：npm run build；主包<500kB告警阈值 |
+| 前端 | frontend/：npm test（测试页类型＋竞态回归）、npm run lint、npm run build；主包<500kB告警阈值 |
 | UI/交互 | 浏览器实测 + 截图视觉验收 |
 | 纯文档 | 核对源码/链接/差异；明确未跑运行验证 |
 
@@ -47,3 +47,5 @@
 - 证据见[progress.md](progress.md)、[feature_list.json](feature_list.json)；静态缺口见[session-handoff.md](session-handoff.md)，未复现不得宣称通过。
 - 收尾同步progress/feature_list/session-handoff；核对clean-state-checklist并提交；密钥、运行数据、构建产物不入库。
 - 性能基准待补：压缩/全量回放耗时。
+
+交互竞态复验：启动前端后打开 `/tests/session-races.html`，按页面顶部源码说明操作。该页只用内存API/假SSE，未知请求直接拒绝，不连接真实后端。

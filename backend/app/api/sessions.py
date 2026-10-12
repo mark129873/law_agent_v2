@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from contextlib import contextmanager
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -126,16 +127,10 @@ async def start_turn(
     # 模式随提交生效（ZCode resolveSubmittedExecutionState 语义）：缺省沿用当前
     if body.mode:
         execution_state.save_execution_state(settings.data_dir, body.mode)
-    # turn 使用独立 DB 会话：HTTP 请求结束时请求级会话会关闭，
-    # 而后台泵任务要一直用到 turn 收口。
-    turn_db = db.new_session()
-    recorder = TurnRecorder(turn_db, session_id, model=settings.model_id, max_tokens=settings.max_tokens)
-    stop_event = turn_manager.register(session_id, recorder.turn_id)
-
-    history = replay.load_history(turn_db, session_id)
-    history.append({"role": "user", "content": body.text})
-
-    return _turn_sse_response(client, recorder, history, stop_event)
+    with _prepare_turn(session_id) as (recorder, stop_event):
+        history = replay.load_history(recorder.db, session_id)
+        history.append({"role": "user", "content": body.text})
+        return _turn_sse_response(client, recorder, history, stop_event)
 
 
 @router.post("/{session_id}/regenerate")
@@ -147,25 +142,38 @@ async def regenerate_turn(
     _check_llm_config()
     _check_not_running(session_id)
 
+    with _prepare_turn(session_id) as (recorder, stop_event):
+        turn_db = recorder.db
+        last_user = store.find_last_user_message(turn_db, session_id)
+        if last_user is None:
+            raise HTTPException(status_code=404, detail="没有可重新生成的轮次")
+
+        # 回滚仅影响原轮回复和事实；保留的用户消息仍可在装配失败后再次重跑。
+        store.rollback_turn(turn_db, session_id, store.turn_id(last_user), last_user.sequence)
+        store.retag_message(turn_db, last_user, recorder.turn_id)
+        history = replay.load_history(turn_db, session_id)
+        return _turn_sse_response(
+            client, recorder, history, stop_event, user_sequence=last_user.sequence
+        )
+
+
+@contextmanager
+def _prepare_turn(session_id: str):
+    """装配期拥有独立Session；成功交给pump，失败/取消则立即释放登记和连接。"""
     turn_db = db.new_session()
-    last_user = store.find_last_user_message(turn_db, session_id)
-    if last_user is None:
-        turn_db.close()
-        raise HTTPException(status_code=404, detail="没有可重新生成的轮次")
-
-    recorder = TurnRecorder(turn_db, session_id, model=settings.model_id, max_tokens=settings.max_tokens)
-    stop_event = turn_manager.register(session_id, recorder.turn_id)
-
-    # 回滚：删该轮 assistant 行（级联 parts）与该轮事实；用户消息保留并改挂新轮
-    store.rollback_turn(turn_db, session_id, store.turn_id(last_user), last_user.sequence)
-    # 用量直接来自保留下来的 turn 事实，无需修补累计列。
-    store.retag_message(turn_db, last_user, recorder.turn_id)
-
-    history = replay.load_history(turn_db, session_id)  # 以保留的用户消息结尾
-
-    return _turn_sse_response(
-        client, recorder, history, stop_event, user_sequence=last_user.sequence
-    )
+    recorder = None
+    try:
+        recorder = TurnRecorder(turn_db, session_id, model=settings.model_id, max_tokens=settings.max_tokens)
+        stop_event = turn_manager.register(session_id, recorder.turn_id)
+        yield recorder, stop_event
+    except BaseException:
+        # close 同时回滚未提交事务；不让失败的装配永久占用同会话单turn槽位。
+        try:
+            if recorder is not None:
+                turn_manager.unregister(session_id, recorder.turn_id)
+        finally:
+            turn_db.close()
+        raise
 
 
 def _check_llm_config() -> None:
@@ -195,7 +203,7 @@ def _turn_sse_response(
         system_prompt=_load_system_prompt(),
         history=history,
         stop_flag=stop_event.is_set,
-        approver=InteractiveApprover(turn_db, session_id, recorder, queue),
+        approver=InteractiveApprover(turn_db, session_id, recorder, queue, stop_event),
         settings=settings,
         queue=queue,
         persist_user_message=user_sequence is None,
@@ -219,8 +227,6 @@ def _turn_sse_response(
             turn_manager.unregister(session_id, recorder.turn_id)
             turn_db.close()
 
-    asyncio.create_task(pump())
-
     async def event_stream():
         """SSE 生成器：读队列转帧；断开时退出但不杀后台 turn（刷新回看语义）。"""
         while True:
@@ -233,11 +239,19 @@ def _turn_sse_response(
                 break
             yield _sse_frame(event)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    # 响应与依赖全部准备好才启动pump，避免构造响应失败后后台仍偷偷执行。
+    response = StreamingResponse(event_stream(), media_type="text/event-stream")
+    coroutine = pump()
+    try:
+        asyncio.create_task(coroutine)
+    except BaseException:
+        coroutine.close()
+        raise
+    return response
 
 
 @router.post("/{session_id}/stop")
-def stop_turn(session_id: str) -> dict:
+async def stop_turn(session_id: str) -> dict:
     """请求停止当前 turn：循环在下一个检查点优雅收口（部分输出保留）。"""
     if not turn_manager.request_stop(session_id):
         raise HTTPException(status_code=404, detail="该会话没有进行中的 turn")
@@ -259,7 +273,7 @@ class ApprovalIn(BaseModel):
 
 
 @router.post("/{session_id}/approval")
-def submit_approval(session_id: str, body: ApprovalIn) -> dict:
+async def submit_approval(session_id: str, body: ApprovalIn) -> dict:
     """提交审批决定：唤醒正在等待的 turn（与连接无关，刷新后仍可提交）。
 
     选项语义（ZCode 同款）：
@@ -271,6 +285,7 @@ def submit_approval(session_id: str, body: ApprovalIn) -> dict:
     from app.agent.permission_service import derive_rule
     from app.sessions import approvals, execution_state
 
+    # 与 stop/等待协程共用事件循环；有效性检查、配置写入和 resolve 之间不让出执行权。
     option_id = body.option_id or ("allowOnce" if body.approved else "deny")
     feedback = (body.feedback or "").strip()[:4096] or None
 

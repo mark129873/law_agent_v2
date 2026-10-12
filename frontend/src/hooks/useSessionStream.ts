@@ -24,6 +24,12 @@ export interface LivePendingApproval {
   full_access: boolean
 }
 
+/** 流结束时的身份快照；异步GET只能收尾这个版本、这个turn。 */
+export interface StreamCompletion {
+  generation: number
+  turnId: string | null
+}
+
 export function useSessionStream(sessionId: string | null) {
   // 用量徽标读取收口后的回放，只维护界面实际消费的实时状态。
   const [turn, setTurn] = useState<TurnData | null>(null)
@@ -36,6 +42,14 @@ export function useSessionStream(sessionId: string | null) {
   const turnRef = useRef<TurnData | null>(null)
   // 本轮发送的文本：turn_started 到达时用于立即显示用户气泡
   const sentTextRef = useRef('')
+  // ref 在发送当下立即更新；React尚未重渲染时也能拒绝重复发送，并让旧GET失效。
+  const streamingRef = useRef(false)
+  const generationRef = useRef(0)
+  const getStreamGeneration = useCallback(() => generationRef.current, [])
+  const hasActiveStream = useCallback(() => streamingRef.current, [])
+  const getCompletion = useCallback((generation = generationRef.current): StreamCompletion => (
+    { generation, turnId: turnRef.current?.turn_id ?? null }
+  ), [])
   // 未决审批的镜像 ref（事件归约器内读取，避免闭包旧值）
   const pendingApprovalRef = useRef<{ request_id: string } | null>(null)
 
@@ -183,7 +197,10 @@ export function useSessionStream(sessionId: string | null) {
             )
             setTurn({ ...cur })
           }
-          if (pendingApprovalRef.current?.request_id === event.request_id) setPendingApproval(null)
+          if (pendingApprovalRef.current?.request_id === event.request_id) {
+            pendingApprovalRef.current = null
+            setPendingApproval(null)
+          }
           break
 
         case 'compacted':
@@ -218,10 +235,13 @@ export function useSessionStream(sessionId: string | null) {
 
   /** 发送用户消息：立即本地显示用户气泡，随后消费 SSE 流（execution 随提交生效） */
   const send = useCallback(
-    async (text: string, onFinished?: () => void, execution?: ExecutionDraft) => {
-      if (!sessionId || isStreaming) return
+    async (text: string, onFinished?: (completion: StreamCompletion) => void, execution?: ExecutionDraft) => {
+      if (!sessionId || streamingRef.current) return
+      streamingRef.current = true
+      const generation = ++generationRef.current
       setError(null)
       setPendingApproval(null)
+      pendingApprovalRef.current = null
       setIsStreaming(true)
       sentTextRef.current = text
       turnRef.current = null
@@ -232,15 +252,18 @@ export function useSessionStream(sessionId: string | null) {
         // 连接中断：turn 在后端继续跑，界面提示可刷新回看
         setError(e instanceof Error ? e.message : '连接中断，可稍后刷新回看进度')
       } finally {
+        streamingRef.current = false
         setIsStreaming(false)
-        onFinished?.()
+        onFinished?.(getCompletion(generation))
       }
     },
-    [sessionId, isStreaming, applyEvent],
+    [sessionId, applyEvent, getCompletion],
   )
 
-  /** 清空实时轮次（切换会话/详情刷新后由调用方触发） */
-  const clearTurn = useCallback(() => {
+  /** 仅允许对应终态回放收尾；审批刷新或旧GET不能清掉正在消费的流。 */
+  const clearTurn = useCallback((completion: StreamCompletion) => {
+    if (streamingRef.current || generationRef.current !== completion.generation
+        || turnRef.current?.turn_id !== completion.turnId || turnRef.current?.state === 'running') return
     turnRef.current = null
     setTurn(null)
     setPendingApproval(null)
@@ -249,9 +272,13 @@ export function useSessionStream(sessionId: string | null) {
 
   /** 重新生成（错误重试同机制）：回滚最后一轮回复并重跑，事件走同一归约器 */
   const regenerate = useCallback(
-    async (onFinished?: () => void) => {
-      if (!sessionId || isStreaming) return
+    async (onFinished?: (completion: StreamCompletion) => void) => {
+      if (!sessionId || streamingRef.current) return
+      streamingRef.current = true
+      const generation = ++generationRef.current
       setError(null)
+      setPendingApproval(null)
+      pendingApprovalRef.current = null
       setIsStreaming(true)
       turnRef.current = null
 
@@ -260,12 +287,13 @@ export function useSessionStream(sessionId: string | null) {
       } catch (e) {
         setError(e instanceof Error ? e.message : '连接中断，可稍后刷新回看进度')
       } finally {
+        streamingRef.current = false
         setIsStreaming(false)
-        onFinished?.()
+        onFinished?.(getCompletion(generation))
       }
     },
-    [sessionId, isStreaming, applyEvent],
+    [sessionId, applyEvent, getCompletion],
   )
 
-  return { turn, isStreaming, error, send, regenerate, clearTurn, pendingApproval }
+  return { turn, isStreaming, error, send, regenerate, clearTurn, pendingApproval, getStreamGeneration, hasActiveStream, getCompletion }
 }

@@ -8,23 +8,22 @@
    （load_history 只发边界之后的消息）。
 
 预算口径（产品决策）：预算 = 上下文窗口 − 32K 输出预留 − 13K buffer。
-token 来源：优先用上一次 API 调用的真实 input_tokens，否则按字符数/4 估算
-（mini_harness 的混合估算思想）。
+token 来源：最近真实 input_tokens 加历史增长量，并以字符数/4估算兜底。
 
 熔断：连续 3 次摘要失败后本会话跳过 compact（避免每轮都烧一次失败调用），
-回退到反应式压缩（API 报 prompt_too_long 时由调用方处理）。
+无法安全缩减时由调用方明确失败；专项超限恢复也不能绕过熔断。
 
-为什么只在 turn 开始时压缩：一轮之内增长有限，turn 边界是天然的干净
-切分点；轮内超长由反应式重试兜底。
+每步检查预算，但摘要边界只跨已结束的旧轮；活跃轮的原始请求与工具配对不切开。
 """
 
 import asyncio
 import logging
+from copy import deepcopy
 from typing import AsyncIterator
 
 from sqlalchemy import func, select
 
-from app.models import Part
+from app.models import Message, Part
 from app.sessions import store
 
 logger = logging.getLogger(__name__)
@@ -70,31 +69,43 @@ def json_dumps_safe(obj) -> str:
         return str(obj)
 
 
-def needs_compact(settings, history: list, last_input_tokens: int | None = None) -> bool:
-    """是否需要压缩：真实 usage 优先，估算兜底。"""
-    estimate = (
-        last_input_tokens
-        if last_input_tokens is not None and last_input_tokens > 0
-        else estimate_history_tokens(history)
-    )
+def needs_compact(settings, history: list, last_input_tokens: int | None = None,
+                  measured_history_tokens: int | None = None) -> bool:
+    """真实用量加测量后增量；取估算下限，避免小的旧usage掩盖新工具大输出。"""
+    estimate = estimate_history_tokens(history)
+    if last_input_tokens is not None and last_input_tokens > 0:
+        growth = max(0, estimate - measured_history_tokens) if measured_history_tokens is not None else 0
+        estimate = max(estimate, last_input_tokens + growth)
     return estimate > context_budget(settings)
 
 
-def microcompact_parts(db, session_id: str, keep: int) -> int:
+def is_context_limit_error(exc: Exception) -> bool:
+    """只识别明确的输入上下文超限；普通400、网络错误和输出长度错误均不重试。"""
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    code = error.get("code") or error.get("type") if isinstance(error, dict) else None
+    if code in {"context_length_exceeded", "prompt_too_long"}:
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "prompt is too long", "prompt too long", "prompt_too_long",
+        "context_length_exceeded", "maximum context length", "input is too long",
+    ))
+
+
+def microcompact_parts(db, session_id: str, keep: int, *, before_sequence: int | None = None) -> int:
     """把较旧的工具输出改写为占位符，保留最近 keep 条完整。
 
     只动"已完成/已失败"且输出非空的 tool_call part；返回改写条数。
     为什么整行 upsert：与存储层里程碑语义一致，sequence/时间线不动。
     """
-    parts = list(
-        db.execute(
-            select(Part)
-            .where(Part.session_id == session_id, func.json_extract(Part.data, "$.type") == "tool")
-            .order_by(Part.time_updated.asc())
-        ).scalars()
-    )
+    query = select(Part).where(
+        Part.session_id == session_id, func.json_extract(Part.data, "$.type") == "tool")
+    if before_sequence is not None:
+        query = query.join(Message, Part.message_id == Message.id).where(Message.sequence < before_sequence)
+    parts = list(db.execute(query.order_by(Part.time_updated.asc())).scalars())
     candidates = [p for p in parts if _has_output(p)]
-    to_clear = candidates[:-keep] if len(candidates) > keep else []
+    to_clear = candidates[:-keep] if keep > 0 else candidates
     changed = 0
     for part in to_clear:
         data = store._load(part.data)
@@ -157,77 +168,69 @@ async def summarize_history(client, history: list) -> str:
     return "".join(chunks).strip()
 
 
-async def maybe_compact(deps) -> AsyncIterator[dict]:
-    """turn 开始时的压缩检查（异步生成器：边做边吐 compacted 事件）。
-
-    就地改写 deps.history：压缩后变为 [摘要 user 消息, 当前用户消息]。
-    熔断中的会话直接跳过（记 WARNING 日志）。
-    """
-    from app.config import settings
-
-    settings = deps.settings
-    history = deps.history
-    if len(history) < 2:
-        return  # 首轮无事可压
-
-    if not needs_compact(settings, history, deps.last_input_tokens):
+async def maybe_compact(deps, *, force: bool = False) -> AsyncIterator[dict]:
+    """只改旧轮前缀；不从库重载活跃历史，Stop注入与工具往返也完整保留。"""
+    settings, history = deps.settings, deps.history
+    active_start = getattr(deps, "active_history_start", None)
+    if active_start is None:
+        active_start = max(0, len(history) - 1)
+    if not force and not needs_compact(settings, history, deps.last_input_tokens,
+                                      getattr(deps, "measured_history_tokens", None)):
         return
-
+    if active_start <= 0:
+        return  # 当前轮自身过大时没有安全旧前缀，调用方明确失败而非硬截断。
     session_id = deps.recorder.session_id
+    cutoff = deps.recorder.first_user_sequence - 1
 
-    # ---- 第一级：microcompact（零成本） ----
-    cleared = microcompact_parts(deps.recorder.db, session_id, settings.microcompact_keep)
-    # 重建历史（工具结果占位要反映到内存历史里）
-    fresh = await _reload_history(deps)
-    if fresh is not None:
-        deps.history[:] = fresh
-    if not needs_compact(settings, deps.history, None):
-        logger.info("microcompact 后回到预算内 session=%s 清理=%s 条", session_id, cleared)
+    # 本地占位仅影响旧轮。按callID替换旧前缀，绝不丢弃尚未落库的活跃历史。
+    cleared = microcompact_parts(deps.recorder.db, session_id, settings.microcompact_keep,
+                                 before_sequence=cutoff + 1)
+    if cleared:
+        cleared_ids = set()
+        parts = deps.recorder.db.scalars(select(Part).where(Part.session_id == session_id)).all()
+        for part in parts:
+            data = store.part_data(part)
+            if data.get("output") == _MICRO_PLACEHOLDER:
+                cleared_ids.add(data.get("tool_call_id"))
+        for message in history[:active_start]:
+            if isinstance(message.get("content"), list):
+                for block in message["content"]:
+                    if block.get("type") == "tool_result" and block.get("tool_use_id") in cleared_ids:
+                        block["content"] = _MICRO_PLACEHOLDER
+        deps.last_input_tokens = None
+        deps.measured_history_tokens = None
+    if not force and not needs_compact(settings, history, deps.last_input_tokens,
+                                      getattr(deps, "measured_history_tokens", None)):
         return
-
-    # ---- 第二级：LLM 摘要 ----
     if _failure_counts.get(session_id, 0) >= _MAX_COMPACT_FAILURES:
         logger.warning("compact 熔断中，跳过摘要 session=%s", session_id)
         return
 
-    prior = history[:-1]  # 当前用户消息不参与摘要
-    if not prior:
-        return
+    # 摘要输入与待替换前缀一致；模型失败时原历史和边界不动。
+    prior = deepcopy(history[:active_start])
     tokens_before = estimate_history_tokens(history)
     try:
-        summary_text = await asyncio.wait_for(
-            summarize_history(deps.client, prior), timeout=120
-        )
+        summary_text = await asyncio.wait_for(summarize_history(deps.client, prior), timeout=120)
+        if not isinstance(summary_text, str) or not summary_text.strip():
+            raise ValueError("摘要为空，保留原上下文")
+        summary_text = summary_text.strip()
+        summary = {"role": "user", "content": f"<此前对话摘要>\n{summary_text}\n</此前对话摘要>"}
+        if estimate_history_tokens([summary]) >= estimate_history_tokens(prior):
+            raise ValueError("摘要未缩短上下文，保留原历史")
     except Exception as exc:
         _failure_counts[session_id] = _failure_counts.get(session_id, 0) + 1
         logger.warning("compact 摘要失败(%s/%s): %s", _failure_counts[session_id], _MAX_COMPACT_FAILURES, exc)
         return
 
-    _failure_counts[session_id] = 0
-    cutoff = deps.recorder.first_user_sequence - 1  # 当前轮的消息全部留在边界之后
     store.save_compaction(deps.recorder.db, session_id, deps.recorder.turn_id,
                           cutoff, summary_text, tokens_before, estimate_tokens(summary_text))
-    # 就地重建内存历史：摘要 + 当前用户消息
-    deps.history[:] = [
-        {"role": "user", "content": f"<此前对话摘要>\n{summary_text}\n</此前对话摘要>"},
-        history[-1],
-    ]
-    yield {
-        "type": "compacted",
-        "tokens_before": tokens_before,
-        "tokens_after": estimate_tokens(summary_text),
-    }
-
-
-async def _reload_history(deps) -> list | None:
-    """microcompact 后从库重读历史（turn 开始时未产生新行，安全）。"""
-    from app.sessions import replay
-
-    try:
-        return replay.load_history(deps.recorder.db, deps.recorder.session_id)
-    except Exception:
-        logger.exception("microcompact 后重读历史失败")
-        return None
+    _failure_counts[session_id] = 0
+    deps.history[:] = [summary, *history[active_start:]]
+    deps.active_history_start = 1
+    deps.last_input_tokens = None
+    deps.measured_history_tokens = None
+    yield {"type": "compacted", "tokens_before": tokens_before,
+           "tokens_after": estimate_history_tokens(deps.history)}
 
 
 def reset_failure_count(session_id: str) -> None:

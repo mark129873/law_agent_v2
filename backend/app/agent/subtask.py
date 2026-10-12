@@ -99,6 +99,10 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                 out = await authorize_tool(
                     deps, t["name"], t.get("input") or {}, allow_full_access=False
                 )
+                # 与主工具相同：等待时停止优先于迟到批准，不派发线程池工具。
+                if deps.stop_flag():
+                    status = "stopped"
+                    break
                 if out is None:
                     out = await asyncio.to_thread(
                         execute_tool, t["name"], t.get("input") or {}

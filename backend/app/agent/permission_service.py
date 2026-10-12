@@ -15,6 +15,8 @@
 "总是允许"退化为整条命令精确匹配——否则 `rm:*` 会连 `rm -rf /` 一起放行。
 """
 
+import re
+
 from app.agent.tools import safe_path
 from app.config import settings
 
@@ -37,13 +39,17 @@ _HIGH_RISK_ROOTS = frozenset(
      "net", "set-executionpolicy", "shutdown"}
 )
 
-# bash 只读命令根词（命中且无管道/重定向/命令链 → 运行时降级低风险免批）
-_READONLY_BASH_ROOTS = (
+# 只接受无需 shell 求值的字面量；复杂语法宁可多问一次，也不猜测只读。
+_READONLY_ROOTS = frozenset({
     "ls", "dir", "cat", "type", "echo", "pwd", "head", "tail", "wc",
     "which", "where", "get-childitem", "get-content", "select-string",
-    "git status", "git log", "git diff", "git show", "git branch",
-    "git remote", "python --version", "node --version",
-)
+})
+_GIT_READONLY_OPTIONS = {
+    "status": {"--short", "-s", "--branch", "-b", "--porcelain", "--porcelain=v1", "--porcelain=v2"},
+    "log": {"--oneline", "--all", "--decorate", "--no-decorate", "--no-patch"},
+    "branch": {"--list", "--all", "-a", "--remotes", "-r", "-v", "-vv", "--show-current", "--no-color"},
+    "remote": {"-v", "--verbose"},
+}
 
 # ---------- 工具能力声明（ZCode ToolPermissionSpec 精简版） ----------
 # permission: 能力组（edit 类在 edit 模式免确认）；readOnly: build 模式放行依据
@@ -68,13 +74,31 @@ _DEFAULT_SPEC = {"permission": "unknown", "riskLevel": "medium", "sideEffectScop
 # ---------- 能力解析 ----------
 
 def _is_readonly_bash(command: str) -> bool:
-    """bash 只读命令判定：白名单根词开头，且不含管道/重定向/命令链。"""
-    cmd = command.strip().lower()
-    if not cmd or any(ch in cmd for ch in "|>&;"):
+    """仅降级可证明的简单只读调用；不使用与 PowerShell 不同的 shell 解析器。"""
+    # 在 strip 前检查控制字符，避免末尾换行或回车被吞掉；禁用引号、转义、
+    # 重定向、变量、子表达式、脚本块与命令链。未知结构交给现有审批流程。
+    if any(ord(ch) < 32 and ch != "\t" for ch in command):
         return False
-    return cmd in _READONLY_BASH_ROOTS or any(
-        cmd.startswith(root + " ") for root in _READONLY_BASH_ROOTS
-    )
+    if not re.fullmatch(r"[\w ./\\:*?=,@+\-\t]+", command):
+        return False
+    words = command.strip().split()
+    if not words:
+        return False
+    root = words[0].lower()
+    if root in _READONLY_ROOTS:
+        return True
+    if root in {"python", "node"}:
+        return words[1:] == ["--version"]
+    if root != "git" or len(words) < 2:
+        return False
+    # Git 参数区分大小写：-d/-D、-m/-M 等写操作绝不能被 lower 后误放行。
+    # diff/show 可能调用外部 diff/textconv；未列出的子命令和参数都需要审批。
+    subcommand = words[1]
+    options = _GIT_READONLY_OPTIONS.get(subcommand)
+    if options is None:
+        return False
+    return all(arg in options or (subcommand == "log" and re.fullmatch(r"-\d+", arg))
+               for arg in words[2:])
 
 
 def _capability(tool_name: str, tool_input: dict) -> dict:

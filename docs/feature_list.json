@@ -251,5 +251,45 @@
     "status": "passing",
     "scope": "修复三条前端 lint 警告；按本次授权仅更新 README 2.1",
     "evidence": "lint 0警告/0错误，build通过；pytest 121过；云浏览器模拟组件验证权限回显/输入保留/草稿发送/计时/折叠/成功失败停止；README其他章节未变。"
+  },
+  "priority_fixes_review": {
+    "date": "2026-10-12",
+    "baseline": "4d2e7a3",
+    "status": "passing",
+    "scope": "仅六项：命令只读审批、审批停止、启动清理、空摘要、步间预算/超限恢复、前端审批/GET竞态",
+    "evidence": "后端220过（新增99）；前端6竞态回归、测试页类型检查、lint/build过，主包362.52kB；隔离uvicorn health/空列表通过；云浏览器真React+假SSE验证连续审批、实时续流、旧GET不覆盖新轮，4截图。",
+    "items": [
+      {
+        "name": "保守只读判定",
+        "status": "passing",
+        "evidence": "60个build/edit正反例；换行/展开/Git写参数转审批，简单读取免批。"
+      },
+      {
+        "name": "审批等待停止",
+        "status": "passing",
+        "evidence": "10例主/子等待、同时批准停止、迟到三类批准、协程取消；无工具副作用、无pending残留。"
+      },
+      {
+        "name": "turn装配清理",
+        "status": "passing",
+        "evidence": "发送/重跑×history/prompt/deps/response/schedule共10个故障注入；注销/关闭且同会话重试成功。"
+      },
+      {
+        "name": "空摘要保护",
+        "status": "passing",
+        "evidence": "空/全空白摘要两例；边界、历史不变并计入失败熔断。"
+      },
+      {
+        "name": "步间预算与超限恢复",
+        "status": "passing",
+        "evidence": "17项假模型回归；保留活跃轮配对，真实SDK超限最多恢复一次，非超限不重试，40步含失败请求，工具不重执行。"
+      },
+      {
+        "name": "前端流与回放竞态",
+        "status": "passing",
+        "evidence": "6项App/Hook可执行回归；云浏览器验证批准后续流/下一审批/拒绝/旧GET与新turn/最终回放，截图tmp/priority-ui。"
+      }
+    ],
+    "boundaries": "无真实模型、无schema/README改动；不新增工具输出归档，当前轮自身过大明确失败；PowerShell实机未验；浏览器为内存API模拟，非后端全链路。未提交/push，待审核。"
   }
 }

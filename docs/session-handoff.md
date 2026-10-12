@@ -1,6 +1,14 @@
 # 会话交接
 
-## 最新（2026-10-10，Session 016）
+## 最新（2026-10-12，Session 017）
+
+- 六项修复已落地；详见 feature_list.json 的 priority_fixes_review。README/schema未改，尚未提交或push。
+- 后端220过；前端6竞态测试、测试页类型检查、lint/build过；隔离启动health/空列表过。
+- 云浏览器真实App＋假SSE验证审批续流、下一审批、拒绝与旧GET/新turn竞态；4截图在tmp/priority-ui。非真实后端E2E，无模型调用。
+- 主模型40步含失败请求；明确上下文超限最多恢复一次。只压旧轮，当前轮过大明确失败，不截断配对或重跑工具。
+- 测试服务和临时库已清理；后续先审核diff，再按用户确认处理提交/push。
+
+## 历史（2026-10-10，Session 016）
 
 - 三条前端 lint 警告已修复；用户授权本次仅更新 README 2.1，其他章节未改。
 - lint 零警告/零错误；build、pytest 121 项通过；云浏览器模拟组件回归通过。
@@ -48,14 +56,14 @@
 
 ## 未解决项
 
-以下由源码静态发现，**未运行复现、未修复**：
+以下为本轮范围之外的既有项；已修复的审批等待及超长恢复不再列作缺口：
 
 | 优先核对 | 问题 | 位置 |
 |---|---|---|
-| 审批停止 | 等待不监听stop；弹窗无停止按钮 | approvals.py、turn_manager.py、ApprovalModal.tsx |
+| 审批入口 | 后端等待已可停止；弹窗仍无停止按钮 | ApprovalModal.tsx |
 
 | 工具呈现 | tool_started在执行结束后才发；自动放行无审批事实 | loop.py |
-| 压缩接线 | 入口未继承上一轮usage；无专用超长重试；摘要调用未记model-io/用量 | api/sessions.py、loop.py、compact.py |
+| 压缩观测 | 入口未继承上一轮usage；摘要调用未记model-io/用量；当前轮过大明确失败 | api/sessions.py、compact.py |
 | 路径 | PowerShell无系统沙箱，glob未过safe_path | permission_service.py、tools.py |
 
 既有限制：长会话全量回放；PowerShell 无系统沙箱。

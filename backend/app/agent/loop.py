@@ -61,7 +61,9 @@ class TurnDeps:
     max_steps: int = MAX_STEPS_DEFAULT
     stop_flag: Callable[[], bool] = field(default_factory=lambda: (lambda: False))
     settings: object = None  # 压缩预算等（None = 禁用压缩）
-    last_input_tokens: int | None = None  # 上一轮真实 input_tokens（无则估算）
+    last_input_tokens: int | None = None  # 最近主模型实际输入量
+    measured_history_tokens: int | None = None  # 同次调用前历史估算，供计算步间增量
+    active_history_start: int | None = None  # 当前用户原文所在索引，摘要不能跨越此处
     queue: object | None = None  # SSE共用队列（审批/子助手直推事件用）
     persist_user_message: bool = True  # 重新生成时为 False（用户消息已存在）
     user_sequence: int | None = None  # 重新生成时锚定的既有用户消息 sequence
@@ -104,18 +106,16 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
     logger.info("turn 开始 session=%s turn=%s", deps.recorder.session_id, turn_id)
     yield {"type": "turn_started", "turn_id": turn_id, "started_at": deps.recorder.started_at}
 
+    deps.active_history_start = max(0, len(deps.history) - 1)
     state = "success"
     stop_requested = False
 
     try:
-        # ---- 压缩检查（仅 turn 开始时；未配置 settings 则跳过） ----
-        if deps.settings is not None:
-            from app.agent.compact import maybe_compact
-
-            async for compact_event in maybe_compact(deps):
-                yield compact_event
+        from app.agent.compact import (estimate_history_tokens, is_context_limit_error,
+                                       maybe_compact, needs_compact)
 
         steps = 0
+        context_retries = 0  # 整个turn最多一次专项恢复，不因成功模型步而重置。
         while True:
             # 与原步数边界一致：只有还需续轮时检查，末步正常结束仍算成功。
             if steps >= deps.max_steps:
@@ -127,9 +127,24 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 stop_requested = True
                 break
 
+            # 每步重新检查工具结果增长；安全压缩后仍超限就停止，不丢当前轮历史。
+            if deps.settings is not None:
+                async for compact_event in maybe_compact(deps):
+                    yield compact_event
+                if deps.stop_flag():
+                    stop_requested = True
+                    break
+                if needs_compact(deps.settings, deps.history, deps.last_input_tokens,
+                                 deps.measured_history_tokens):
+                    yield {"type": "error", "message": "上下文仍超过预算，无法安全压缩当前轮；请缩短请求或工具输出后重试。"}
+                    state = "failed"
+                    break
+
             # ---- LLM 流式调用（一个模型步） ----
             steps += 1
+            input_estimate = estimate_history_tokens(deps.history)
             message_id = deps.recorder.step_message()
+            reply = None  # 记录上下文进入失败时尚未产生reply，异常路径也必须可收口。
             try:
                 with record_model_step(deps, deps.system_prompt, deps.history, deps.tools) as reply:
                     async for event in deps.client.stream(
@@ -146,9 +161,23 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                             deps.recorder.add_usage(**reply.usage)
                             # 只有主循环input影响主上下文压缩预算。
                             deps.last_input_tokens = reply.usage["input_tokens"]
+                            deps.measured_history_tokens = input_estimate
                             yield {"type": "token_count", "input_tokens": reply.usage["input_tokens"],
                                    "output_tokens": reply.usage["output_tokens"]}
             except Exception as exc:  # LLM 层异常：转 error 事件，failed 收口
+                # 只恢复明确的输入超限；流已产生内容时不重试，避免重复输出或工具计划。
+                if (deps.settings is not None and is_context_limit_error(exc)
+                        and context_retries < 1 and reply is not None
+                        and not reply.text and not reply.tool_uses):
+                    context_retries += 1
+                    before = estimate_history_tokens(deps.history)
+                    async for compact_event in maybe_compact(deps, force=True):
+                        yield compact_event
+                    if estimate_history_tokens(deps.history) < before:
+                        deps.recorder.finish_message(message_id, "context_recovered")
+                        continue
+                if is_context_limit_error(exc):
+                    exc = RuntimeError(f"上下文超限且无法继续安全恢复；请缩短请求或工具输出后重试。原错误：{exc}")
                 logger.exception("LLM 调用失败")
                 deps.recorder.write_error_part(message_id, str(exc))
                 yield {"type": "error", "message": str(exc)}
@@ -248,6 +277,9 @@ async def _execute_one(
     output = await authorize_tool(
         deps, name, tool_input, data_dir=deps.settings.data_dir if deps.settings else None
     )
+    # 审批返回到执行之间再次检查，自定义审批回调也不能越过停止信号。
+    if deps.stop_flag():
+        output = "Error: 操作已停止"
     status = "denied" if output is not None else "completed"
     if output is None:
         deps.recorder.upsert_tool_part(
