@@ -97,7 +97,7 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
                 # 子工具权限与主循环同权（ZCode：子代理请求路由父会话 UI）：
                 # allow 执行 / deny 拒绝 / ask 走交互审批（挂起等待，计入轮次总耗时）
                 out = await authorize_tool(
-                    deps, t["name"], t.get("input") or {}, allow_full_access=False
+                    deps, t["name"], t.get("input") or {}
                 )
                 # 与主工具相同：等待时停止优先于迟到批准，不派发线程池工具。
                 if deps.stop_flag():

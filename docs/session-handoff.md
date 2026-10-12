@@ -1,6 +1,14 @@
 # 会话交接
 
-## 最新（2026-10-12，Session 017）
+## 最新（2026-10-12，Session 018）
+
+- 三项审批已实现：allowOnce/allowSession/deny；审批不改项目模式/ruleset。README/schema不改。
+- 会话授权仅内存，文件绑定工具＋规范路径；命令和其他工具完整参数精确匹配。跨turn/刷新保留，重启/删除清空；父子共用所属session。
+- API绑定session，重放/未知旧选项失败；停止/取消/拒绝策略/路径变化不能留下授权。原有yolo与项目规则优先级保持。
+- 后端266过；前端11项＋类型/lint/build过；隔离启动通过。云浏览器真App＋假SSE验证三项、续流/拒绝/刷新/旧GET竞态，5截图在tmp/session-approval-ui，无模型调用。
+- 测试服务与临时库清理；代码冻结，尚未commit/push。父级审核后按用户授权通过GitHub插件提交main。
+
+## 历史（2026-10-12，Session 017）
 
 - 六项修复已落地；详见 feature_list.json 的 priority_fixes_review。README/schema未改，尚未提交或push。
 - 后端220过；前端6竞态测试、测试页类型检查、lint/build过；隔离启动health/空列表过。

@@ -76,7 +76,7 @@ function fixture() {
 const detail = (turns = [], title = '回放') => ({ session: { id: 's', title }, turns, pending_approval: null })
 const started = id => ({ type: 'turn_started', turn_id: id, started_at: 1 })
 const completed = id => ({ type: 'turn_completed', turn_id: id, state: 'success', ended_at: 2, active_ms: 1 })
-const approval = id => ({ type: 'approval_request', request_id: id, tool: 'write_file', input: { path: 'test' }, reason: 'test', options: [], full_access: false })
+const approval = id => ({ type: 'approval_request', request_id: id, tool: 'write_file', input: { path: 'test' }, reason: 'test', options: [] })
 
 async function mount() {
   const f = fixture(); f.render(); f.details[0].resolve(detail()); await f.flush(); return f

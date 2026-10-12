@@ -6,7 +6,7 @@
 
 import pytest
 
-from app.agent.permission_service import check_permission, derive_rule
+from app.agent.permission_service import check_permission
 from app.agent.tools import (
     execute_tool,
     safe_path,
@@ -130,8 +130,9 @@ def test_permission_rules_match_and_priority() -> None:
     assert check_permission("build", rules, "bash", {"command": "echo secret file"})["decision"] == "deny"
 
 
-def test_derive_rule_safety() -> None:
-    """规则推导：高危根命令退化为整条精确，普通命令为首词前缀；非 bash 不推导。"""
-    assert derive_rule("bash", {"command": "rm scratch.txt"}) == {"toolName": "bash", "ruleContent": "rm scratch.txt"}
-    assert derive_rule("bash", {"command": "pnpm run lint --fix"}) == {"toolName": "bash", "ruleContent": "pnpm:*"}
-    assert derive_rule("write_file", {"path": "a.txt"}) is None
+def test_session_rule_safety(tmp_data_dir) -> None:
+    """所有命令使用精确范围；文件规则绑定工具和规范目标，绝不退化为整工具。"""
+    from app.sessions.session_permissions import scope_for
+    assert scope_for("bash", {"command": "rm scratch.txt"}) == ("bash", '{"command": "rm scratch.txt"}')
+    assert scope_for("bash", {"command": "pnpm run lint --fix"}) == ("bash", '{"command": "pnpm run lint --fix"}')
+    assert scope_for("write_file", {"path": "a.txt"}) != scope_for("write_file", {"path": "b.txt"})

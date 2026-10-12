@@ -4,7 +4,7 @@
  * - turn 的 SSE 用 fetch ReadableStream 手动解析（EventSource 不支持 POST）。
  */
 
-import type { SessionDetail, SessionItem, SseEvent } from '../types'
+import type { ApprovalOptionId, SessionDetail, SessionItem, SseEvent } from '../types'
 
 /** 统一错误：带状态码与后端 detail 信息 */
 export class ApiError extends Error {
@@ -65,7 +65,7 @@ export function stopTurn(id: string): Promise<{ ok: boolean }> {
 export function submitApproval(
   id: string,
   requestId: string,
-  optionId: string,
+  optionId: ApprovalOptionId,
   feedback?: string,
 ): Promise<{ ok: boolean }> {
   return request(`/api/sessions/${id}/approval`, {

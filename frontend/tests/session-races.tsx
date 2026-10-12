@@ -1,12 +1,13 @@
 /** 真React/真SSE解析器的浏览器回归页。全部数据留内存，任何未知请求都拒绝。
  * npm run dev 后打开 /tests/session-races.html：
  * 发送→两次批准→完成当前轮→发送第二轮→释放旧回放→确认新轮仍在→完成当前轮。
+ * 加 ?restore=1 从固定未决审批回放启动；刷新后批准/拒绝，验证无SSE的恢复路径。
  */
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import App from '../src/App'
 import '../src/index.css'
-import type { SessionDetail, SseEvent, TurnData } from '../src/types'
+import type { ApprovalOption, SessionDetail, SseEvent, TurnData } from '../src/types'
 
 let controller: ReadableStreamDefaultController<Uint8Array> | null = null
 let turnNumber = 0
@@ -15,13 +16,25 @@ let holdNextDetail = false
 let releaseOld: (() => void) | null = null
 const turns: TurnData[] = []
 const session = { id: 'test', title: '审批与回放竞态（模拟数据）', model: 'fake', created_at: Date.now(), updated_at: Date.now(), tokens_used: 0, input_tokens: 0, context_used: 0, context_window: 1000000 }
-const snapshot = (): SessionDetail => ({ session, turns: structuredClone(turns), pending_approval: null })
+const approvalOptions = (path: string): ApprovalOption[] => [
+  { option_id: 'allowOnce', label: '仅本次允许' },
+  { option_id: 'allowSession', label: '本会话内始终允许', content: `目标：{"path":"/workspace/${path}"}` },
+  { option_id: 'deny', label: '拒绝' },
+]
+// 固定回放种子模拟仍在运行的后端；页面刷新只重建测试数据，不使用真实服务或存储授权。
+let pending: SessionDetail['pending_approval'] = new URLSearchParams(location.search).has('restore') ? {
+  request_id: 'approval-restored', tool: 'write_file', input: { path: 'restored.txt', content: '模拟内容' },
+  reason: '刷新恢复的模拟审批', status: 'requested', options: approvalOptions('restored.txt'),
+} : null
+if (pending) turns.push({ turn_id: 'restored', state: 'running', started_at: Date.now(), ended_at: null, active_ms: null,
+  user_message: { id: 'restored-user', text: '验证刷新恢复审批（模拟数据）', time: Date.now() }, work_items: [], final_text: '已保存正文。' })
+const snapshot = (): SessionDetail => ({ session, turns: structuredClone(turns), pending_approval: pending })
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
 function emit(event: SseEvent) {
   controller?.enqueue(new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`))
 }
 function ask(id: string) {
-  emit({ type: 'approval_request', request_id: id, tool: 'write_file', input: { path: `${id}.txt`, content: '仅模拟，不写文件' }, reason: '浏览器回归模拟审批', full_access: false, options: [{ option_id: 'allowOnce', label: '仅本次允许' }, { option_id: 'deny', label: '拒绝' }] })
+  emit({ type: 'approval_request', request_id: id, tool: 'write_file', input: { path: `${id}.txt`, content: '仅模拟，不写文件' }, reason: '浏览器回归模拟审批', options: approvalOptions(`${id}.txt`) })
 }
 // 完全接管当前测试页的fetch：不连接真实API、数据库或模型，也不透传未知请求。
 window.fetch = async (input, init) => {
@@ -47,7 +60,13 @@ window.fetch = async (input, init) => {
   }
   if (url === '/api/sessions/test/approval') {
     const { request_id, option_id } = JSON.parse(String(init?.body))
-    emit({ type: 'approval_resolved', request_id, approved: option_id === 'allowOnce' })
+    if (request_id === 'approval-restored') {
+      pending = null
+      turns[0] = { ...turns[0], state: 'success', ended_at: Date.now(), active_ms: 1000,
+        final_text: `刷新恢复后的审批已处理：${option_id}（模拟结果，不执行工具）` }
+      return json({ ok: true })
+    }
+    emit({ type: 'approval_resolved', request_id, approved: option_id !== 'deny' })
     if (request_id === 'approval-1') {
       emit({ type: 'delta', text: '\n第一项批准后，文字继续增长。' })
       emit({ type: 'tool_started', tool_call_id: 'tool-1', name: 'write_file', input: { path: 'fake.txt' } })

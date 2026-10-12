@@ -2,18 +2,17 @@
  * 审批由后端提供选项，前端只展示并提交决定。
  * 弹窗保留焦点，数字快捷键仅在未输入文字时有效，避免反馈中的数字误触授权。
  */
-import { ArrowRight, ShieldCheck, Warning } from '@phosphor-icons/react'
+import { ArrowRight, ShieldCheck } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { submitApproval } from '../api/client'
 
-export interface ApprovalOption { option_id: string; label: string; content?: string }
+import type { ApprovalOption, ApprovalOptionId } from '../types'
 export interface PendingApproval {
   request_id: string
   tool: string
   input: unknown
   reason: string
   options: ApprovalOption[]
-  full_access: boolean
 }
 export interface ApprovalModalProps {
   sessionId: string
@@ -22,13 +21,15 @@ export interface ApprovalModalProps {
 }
 
 export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModalProps) {
+  // 只接受当前协议的三项，旧服务端残留选项也不能变成授权按钮或快捷键。
+  const options = approval.options.filter((option) => ['allowOnce', 'allowSession', 'deny'].includes(option.option_id))
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   // ref 在点击时立即上锁，连续数字键或双击也不会重复提交。
   const submittingRef = useRef(false)
-  const decide = async (optionId: string) => {
+  const decide = async (optionId: ApprovalOptionId) => {
     if (submittingRef.current) return
     submittingRef.current = true
     setSubmitting(true)
@@ -61,9 +62,9 @@ export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModal
       const target = e.target as HTMLElement
       if (submittingRef.current || e.repeat || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || target.closest('input, textarea, [contenteditable="true"]')) return
       const index = Number(e.key) - 1
-      if (Number.isInteger(index) && index >= 0 && index < approval.options.length) {
+      if (Number.isInteger(index) && index >= 0 && index < options.length) {
         e.preventDefault()
-        void decide(approval.options[index].option_id)
+        void decide(options[index].option_id)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -80,10 +81,10 @@ export function ApprovalModal({ sessionId, approval, onResolved }: ApprovalModal
         <p id="approval-description" className="text-[13px] leading-6 text-zinc-600">助手请求执行 <span className="font-mono font-medium text-zinc-800">{approval.tool}</span>：{approval.reason}</p>
         <pre className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-zinc-200/70 bg-zinc-50 p-4 text-[12px] leading-6 text-zinc-700">{JSON.stringify(approval.input ?? {}, null, 2)}</pre>
         <div role="group" aria-label="审批选项" className="mt-5 space-y-2">
-          {approval.options.map((option, index) => <button key={option.option_id} type="button" disabled={submitting} onClick={() => void decide(option.option_id)} data-permission-option-kind={option.option_id} className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition disabled:opacity-50 ${option.option_id === 'fullAccess' ? 'border-amber-200 bg-amber-50/70 text-amber-900 hover:border-amber-400' : option.option_id === 'allowOnce' ? 'border-accent-200 bg-accent-50/50 text-accent-800 hover:border-accent-600' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+          {options.map((option, index) => <button key={option.option_id} type="button" disabled={submitting} onClick={() => void decide(option.option_id)} data-permission-option-kind={option.option_id} className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition disabled:opacity-50 ${option.option_id === 'allowOnce' ? 'border-accent-200 bg-accent-50/50 text-accent-800 hover:border-accent-600' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
             <span className="font-num flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-current/15 text-[11px]">{index + 1}</span>
             <span className="min-w-0 flex-1 text-[13px] font-medium">{option.label}
-              {option.option_id === 'fullAccess' && <span className="mt-1 flex items-start gap-1.5 text-[11px] font-normal leading-5 text-amber-800"><Warning size={13} className="mt-0.5 shrink-0" />允许的操作直接执行，直到切换模式</span>}
+              {option.option_id === 'allowSession' && <span className="mt-1 block text-[11px] font-normal leading-5 text-zinc-600">仅限当前会话和以下范围；刷新保留，后端重启后失效</span>}
               {option.content && <span className="mt-1 block break-all font-mono text-[11px] font-normal leading-5 text-zinc-600">规则：{option.content}</span>}
             </span><ArrowRight size={15} className="shrink-0" />
           </button>)}

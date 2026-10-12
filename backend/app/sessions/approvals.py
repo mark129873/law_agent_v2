@@ -1,31 +1,17 @@
-"""交互审批：SSE 推请求（带动态选项）→ 前端 POST 决定 → 唤醒循环。
-
-两个组件：
-- 进程内 pending 注册表：request_id -> (asyncio.Event, 决定槽位, tool/input/options)。
-  为什么能支持"刷新页面后仍可响应"：turn 的等待协程持有注册表里的
-  Event，新页面 POST /approval 只要拿到同一个 request_id 就能唤醒，
-  与连接无关。槽位同时携带 tool/input/options——"总是允许"存规则、
-  "完全访问"切模式都在 resolve 侧凭注册表信息完成。
-- InteractiveApprover：loop.py 的 approver 回调实现。它绕过循环直接把
-  approval_request / approval_resolved 事件写进 SSE 队列——因为循环此刻
-  正阻塞在审批等待上，事件必须由这里推，前端才能先弹窗后等待。
-
-决定返回值（ZCode buildPermissionDeniedContent 同语义）：
-approved=False 时 denial_reason 携带用户反馈原文，作为 tool_result 喂回模型。
-"""
+"""交互审批：绑定会话的进程内等待槽，三选项决定，不修改项目权限配置。"""
 
 import asyncio
+from copy import deepcopy
 import logging
 
-from app.agent.permission_service import derive_rule, evaluate
+from app.agent.permission_service import evaluate
 from app.models import new_id, now_ms
-from app.sessions import store
+from app.sessions import session_permissions
 
 logger = logging.getLogger(__name__)
 
-# request_id -> {"event", "approved", "feedback", "tool", "input", "options", "full_access"}
+# 槽位与审批事实均只在进程内；刷新可恢复，重启即失效。
 _pending: dict[str, dict] = {}
-# ZCode 审批事件属于进程内事件流，不写 session_entry 或统计表。
 _events: dict[str, dict[str, dict]] = {}
 
 
@@ -34,30 +20,50 @@ def approval_events(session_id):
 
 
 def forget_turn(session_id, turn_id):
+    """重跑只清该轮审批；会话授权跨turn保留。"""
     records = _events.get(session_id, {})
     for key in [k for k, v in records.items() if v['turn_id'] == turn_id]:
         records.pop(key, None)
-        _pending.pop(key, None)
+        slot = _pending.pop(key, None)
+        if slot:
+            slot["event"].set()
 
 
+def forget_session(session_id: str) -> None:
+    """删除会话释放全部运行内存，不把旧授权留给同ID的后续会话。"""
+    _events.pop(session_id, None)
+    for key, slot in list(_pending.items()):
+        if slot["session_id"] == session_id:
+            _pending.pop(key, None)
+            slot["event"].set()
+    session_permissions.forget_session(session_id)
 
-def register(
-    request_id: str,
-    tool: str | None = None,
-    input_data: dict | None = None,
-    options: list[dict] | None = None,
-    full_access: bool = False,
-    stop_event: asyncio.Event | None = None,
-) -> dict:
-    """登记一个待决审批（携带 tool/input/options 供 resolve 侧派生规则/切模式）。"""
+
+def _options_for_scope(scope: tuple[str, str] | None) -> list[dict]:
+    """选项文案与授权保存使用同一范围快照，不重复解析可能变化的符号链接。"""
+    return [
+        {"option_id": "allowOnce", "label": "仅本次允许"},
+        {"option_id": "allowSession", "label": "本会话内始终允许",
+         "content": session_permissions.describe(scope)},
+        {"option_id": "deny", "label": "拒绝"},
+    ]
+
+
+def build_options(tool_name: str, tool_input: dict) -> list[dict]:
+    """主助手、子助手与刷新回放共用相同三项，并展示实际授权范围。"""
+    return _options_for_scope(session_permissions.scope_for(tool_name, tool_input))
+
+
+def register(request_id: str, tool: str = "", input_data: dict | None = None, *, session_id: str,
+             stop_event: asyncio.Event | None = None) -> dict:
+    """绑定所属会话和参数快照；后续模型参数变化不能改变已展示的范围。"""
+    snapshot = deepcopy(input_data or {})
+    scope = session_permissions.scope_for(tool, snapshot)
     slot = {
-        "event": asyncio.Event(),
-        "approved": False,
-        "feedback": None,
-        "tool": tool,
-        "input": input_data,
-        "options": options or [],
-        "full_access": full_access,
+        "event": asyncio.Event(), "approved": False, "option_id": None, "feedback": None,
+        "session_id": session_id, "tool": tool, "input": snapshot,
+        "scope": scope,
+        "options": _options_for_scope(scope),
         "stop_event": stop_event,
     }
     _pending[request_id] = slot
@@ -65,133 +71,115 @@ def register(
 
 
 def get_request(request_id: str) -> dict | None:
-    """取待决审批的登记信息（不弹出；resolve 后即不可见）。"""
+    """已停止的请求立即作废；不能先写权限、再发现批准已经迟到。"""
     slot = _pending.get(request_id)
-    # stop 与批准可能同时到达：先检查共享停止信号，禁止迟到授权产生副作用。
-    if slot is not None and slot.get("stop_event") is not None and slot["stop_event"].is_set():
+    if slot is not None and slot["stop_event"] is not None and slot["stop_event"].is_set():
         _pending.pop(request_id, None)
         slot["event"].set()
         return None
     return slot
 
 
-def resolve(request_id: str, approved: bool, feedback: str | None = None) -> bool:
-    """提交决定并唤醒等待方；取出式（重复提交/未知 id 返回 False）。"""
+def resolve(request_id: str, option_id: str, *, session_id: str,
+            feedback: str | None = None) -> bool:
+    """只取出一次；错误会话、未知选项与重放均不改决定或授权。"""
     slot = get_request(request_id)
-    if slot is None:
+    if slot is None or slot["session_id"] != session_id:
+        return False
+    if option_id not in {"allowOnce", "allowSession", "deny"}:
+        return False
+    if option_id not in {o["option_id"] for o in slot["options"]}:
+        return False
+    if option_id == "allowSession" and slot["scope"] is None:
         return False
     _pending.pop(request_id, None)
-    slot["approved"] = approved
-    slot["feedback"] = feedback
+    slot["option_id"] = option_id
+    slot["approved"] = option_id != "deny"
+    slot["feedback"] = feedback if option_id == "deny" else None
     slot["event"].set()
     return True
 
 
-def build_options(tool_name: str, tool_input: dict, allow_full_access: bool = True) -> list[dict]:
-    """构造动态选项（排序照抄 ZCode：allowOnce → fullAccess → allowAlways → deny）。
-
-    allowAlways 仅 bash 触发时投放（规则推导只支持 bash 命令），
-    且 content 按高危根命令安全约束生成（精确或前缀）。
-    回放恢复路径（load_replay 的 pending_approval）也用它补齐选项。
-    """
-    options: list[dict] = [{"option_id": "allowOnce", "label": "仅本次允许"}]
-    if allow_full_access:
-        options.append({"option_id": "fullAccess", "label": "完全访问"})
-    rule = derive_rule(tool_name, tool_input)
-    if rule:
-        options.append({"option_id": "allowAlways", "label": "总是允许", "content": rule["ruleContent"]})
-    options.append({"option_id": "deny", "label": "拒绝"})
-    return options
-
-
-async def authorize_tool(deps, tool_name: str, tool_input: dict, *,
-                         data_dir=None, allow_full_access: bool = True) -> str | None:
-    """共用权限闸门：None放行，拒绝返回Error；审批等待包含在总耗时中。"""
+async def authorize_tool(deps, tool_name: str, tool_input: dict, *, data_dir=None) -> str | None:
+    """现有策略先判定；会话允许只能覆盖ask，不能覆盖硬拒或明确deny。"""
     if deps.stop_flag():
         return "Error: 操作已停止"
     result = evaluate(data_dir, tool_name, tool_input)
     decision, reason = result["decision"], result["reason"]
-    if decision == "allow":
-        return None
-    if decision != "ask":
+    if decision == "deny":
         return f"Error: 已被安全策略拒绝：{reason}"
-
-    # 主循环沿用默认选项；子助手明确禁用完全访问，避免复用时丢失限制。
-    options = {} if allow_full_access else {"allow_full_access": False}
-    outcome = await deps.approver(tool_name, tool_input, reason or "该操作需要确认", **options)
+    if decision == "allow" or session_permissions.allows(deps.recorder.session_id, tool_name, tool_input):
+        return None
+    outcome = await deps.approver(tool_name, tool_input, reason or "该操作需要确认")
     if deps.stop_flag():
         return "Error: 操作已停止"
     if not outcome["approved"]:
         return f"Error: 用户拒绝了该操作：{outcome['denial_reason'] or reason}"
+    # 等待期间项目规则可能改变，执行前再确认硬拒/明确拒绝仍优先。
+    latest = evaluate(data_dir, tool_name, tool_input)
+    if latest["decision"] == "deny":
+        return f"Error: 已被安全策略拒绝：{latest['reason']}"
     return None
 
 
 class InteractiveApprover:
-    """loop.py 的 approver 回调：挂起等待用户决定，结果落痕并推事件。
-
-    allow_full_access=False（子助手调用）时不投放"完全访问"选项
-    （ZCode：origin=subagent 的请求不投放 fullAccess）。
-    """
+    """挂起时直推SSE；收到有效决定且通过停止检查后才保存会话范围。"""
 
     def __init__(self, db, session_id: str, recorder, queue: asyncio.Queue,
                  stop_event: asyncio.Event | None = None) -> None:
         self.db = db
         self.session_id = session_id
-        self.recorder = recorder  # 读取当前 turn_id
+        self.recorder = recorder
         self.queue = queue
         self.stop_event = stop_event
 
-    async def __call__(
-        self, tool_name: str, tool_input: dict, reason: str, *, allow_full_access: bool = True
-    ) -> dict:
+    async def __call__(self, tool_name: str, tool_input: dict, reason: str) -> dict:
         if self.stop_event is not None and self.stop_event.is_set():
             return {"approved": False, "denial_reason": "操作已停止"}
         request_id = new_id()
-        options = build_options(tool_name, tool_input, allow_full_access)
-
+        # 先注册再发布，快速回应也能命中槽位；展示和保存使用同一个范围快照。
+        slot = register(request_id, tool_name, tool_input, session_id=self.session_id,
+                        stop_event=self.stop_event)
+        options = slot["options"]
         _events.setdefault(self.session_id, {})[request_id] = {
             'turn_id': self.recorder.turn_id, 'request_id': request_id, 'tool': tool_name,
-            'input': tool_input, 'reason': reason, 'status': 'requested', 'time': now_ms(),
-            'options': options, 'full_access': allow_full_access}
-        # 先注册等待槽，再发布事件，避免前端快速回应落在注册之前。
-        slot = register(request_id, tool_name, tool_input, options, allow_full_access, self.stop_event)
-        # 2. 推审批请求给前端（循环阻塞中，由这里直推队列）
-        await self.queue.put(
-            {
-                "type": "approval_request",
-                "request_id": request_id,
-                "tool": tool_name,
-                "input": tool_input,
-                "reason": reason,
-                "options": options,
-                "full_access": allow_full_access,
-            }
-        )
-
-        # 同时等待审批和停止；finally 撤销槽位及等待任务，取消协程也不留幽灵审批。
+            'input': deepcopy(tool_input), 'reason': reason, 'status': 'requested', 'time': now_ms(),
+            'options': options}
+        self.queue.put_nowait({"type": "approval_request", "request_id": request_id,
+                               "tool": tool_name, "input": tool_input, "reason": reason, "options": options})
         waits = [asyncio.create_task(slot["event"].wait())]
         if self.stop_event is not None:
             waits.append(asyncio.create_task(self.stop_event.wait()))
+        received = False
         approved = False
         try:
             await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
-            stopped = self.stop_event is not None and self.stop_event.is_set()
-            approved = slot["approved"] and not stopped
+            received = True
         finally:
             _pending.pop(request_id, None)
             for task in waits:
                 task.cancel()
-            await asyncio.gather(*waits, return_exceptions=True)
-            record = _events.get(self.session_id, {}).get(request_id)
-            if record is not None:
-                record["status"] = "approved" if approved else "denied"
-            self.queue.put_nowait({"type": "approval_resolved", "request_id": request_id,
-                                   "approved": approved})
-        feedback = slot.get("feedback")
+            try:
+                await asyncio.gather(*waits, return_exceptions=True)
+            except BaseException:
+                received = False
+                raise
+            finally:
+                # gather也会让出执行权，必须在它之后重查停止，避免同tick批准/停止留下授权。
+                record = _events.get(self.session_id, {}).get(request_id)
+                stopped = self.stop_event is not None and self.stop_event.is_set()
+                approved = received and slot["approved"] and not stopped and record is not None
+                if approved:
+                    latest = evaluate(None, tool_name, tool_input)
+                    same_scope = slot["scope"] == session_permissions.scope_for(tool_name, tool_input)
+                    approved = latest["decision"] != "deny" and same_scope and slot["input"] == tool_input
+                if approved and slot["option_id"] == "allowSession":
+                    session_permissions.grant(self.session_id, slot["scope"])
+                if record is not None:
+                    record["status"] = "approved" if approved else "denied"
+                self.queue.put_nowait({"type": "approval_resolved", "request_id": request_id,
+                                       "approved": approved})
+        feedback = slot["feedback"]
         logger.info("审批完成 request_id=%s tool=%s approved=%s", request_id, tool_name, approved)
-
-        # 拒绝时把用户反馈拼进喂回模型的理由（ZCode buildPermissionDeniedContent 同语义）
-        denial_reason = reason
-        if not approved and feedback:
-            denial_reason = f"{reason}；用户反馈：{feedback}"
+        denial_reason = f"{reason}；用户反馈：{feedback}" if not approved and feedback else reason
         return {"approved": approved, "denial_reason": denial_reason}

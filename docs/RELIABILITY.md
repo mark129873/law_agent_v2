@@ -48,4 +48,4 @@
 - 收尾同步progress/feature_list/session-handoff；核对clean-state-checklist并提交；密钥、运行数据、构建产物不入库。
 - 性能基准待补：压缩/全量回放耗时。
 
-交互竞态复验：启动前端后打开 `/tests/session-races.html`，按页面顶部源码说明操作。该页只用内存API/假SSE，未知请求直接拒绝，不连接真实后端。
+交互复验：启动前端后打开 `/tests/session-races.html`；加 `?restore=1` 验证刷新后的三项审批。按页面顶部源码说明操作。该页只用内存API/假SSE，未知请求直接拒绝，不连接真实后端。

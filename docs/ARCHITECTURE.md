@@ -79,7 +79,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 
 - 工具状态按同一part推进：pending→running→completed/error；失败与拒绝均保存 error，原因存 state.error。
 - todo为全量快照，最多20项、最多1项in_progress；todo 表保存当前列表，无自动调度器。
-- 子助手仅7个同步工具，不含todo/subtask；权限沿用父级，实时审批不提供fullAccess。
+- 子助手仅7个同步工具，不含todo/subtask；权限沿用父级，与主助手共用三项审批和父会话授权。
 - 子助手内部对话不写独立message序列，只保存父工具结果，子助手卡片由其投影；模型调用另写带subtask_id的model-io。
 
 ## 4. 数据与状态归属
@@ -150,7 +150,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 
 - 联合主键：`scope + scope_id + namespace + key`。
 - mode 保存 build/edit/yolo；ruleset 按 allow/deny/ask 分组，规则使用 toolName/ruleContent。
-- 审批请求/决定只存进程内存，不在此表。
+- 审批请求、决定和会话允许范围只存进程内存，不在此表；原有项目 ruleset 继续兼容。
 
 #### todo：当前任务板
 
@@ -191,7 +191,8 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 | SQLite app.db | 消息、内容部件、会话事实 | 重启后可回放 |
 | TurnDeps.history | 本turn实际发送给模型的历史 | turn开始重建，步间追加，结束释放 |
 | turn_manager | session→turn映射、停止Event | 进程内，不跨重启恢复 |
-| approvals._pending | request_id→等待Event/决定槽位 | 进程内；数据库审计不能重建正在等待的协程 |
+| approvals._pending | request_id→session/等待Event/决定槽位 | 进程内；数据库审计不能重建正在等待的协程 |
+| session_permissions | session→工具/规范路径或精确参数范围 | 跨turn/刷新；删除会话或进程重启清空，不落盘 |
 | SQLite local_setting | permission.mode / ruleset | 按项目持久化；当前固定工作区共享 |
 | workspace/、workspace/.rubbish/ | 工具文件、删除的可恢复副本 | 不随会话重跑撤销 |
 | 前端实时turn | SSE临时展示状态 | 收口后用数据库回放替换 |
@@ -250,7 +251,9 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - evaluate读取共享模式/规则，返回allow/deny/ask。
 - 命令免批仅接受单行字面量与已知只读参数；换行、展开/子表达式、复杂语法及未知 Git 选项转审批，不能靠根词免批。
 - 判定顺序：硬拒→yolo→deny规则→ask规则→allow规则→edit/build默认策略；yolo跳过普通规则，但不跳过硬拒。
-- ask 时先注册进程内槽位，再发 approval_request；决定更新内存事件并发 approval_resolved。刷新保留选项，重启不恢复审批历史。
+- ask 时先检查会话允许范围；未命中则注册绑定 session 的槽位，再发 approval_request，固定 allowOnce/allowSession/deny 三项。
+- 文件会话范围为工具＋safe_path 规范化目标（其余未知参数精确匹配）；命令完整参数精确匹配，不生成前缀；其他工具完整 input 精确匹配。
+- API 原子校验 session、未决状态和选项；只唤醒决定。等待方退出停止/取消检查后才写内存允许范围，并发 approval_resolved；不改 local_setting。刷新保留选项，重启不恢复审批/授权。
 - 审批等待同时监听停止；停止撤销待决请求，迟到批准失效，主/子工具执行前复查停止；拒绝理由作为Error工具结果回填。
 - 普通文件工具经safe_path限制于workspace；glob未使用同等检查，PowerShell仅固定cwd，没有系统级隔离。
 
@@ -268,7 +271,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 
 - 停止是协作式信号，不强杀已启动命令；审批等待立即退出，主/子工具在授权后再次检查停止。
 - regenerate不撤销文件/命令副作用；删除旧turn事实后，用量聚合自然排除旧轮。
-- 审批事件不入数据库；重启后不会回放失效审批。子助手刷新时仍禁止 fullAccess。
+- 审批事件不入数据库；重启后不会回放失效审批。删除会话同时清理审批事件、待决槽位和会话允许范围；重跑仅清本轮审批，不清会话允许。
 
 ## 8. 观测与扩展
 

@@ -1,3 +1,7 @@
+/** 审批只允许三个明确决定；会话权限由后端内存保存，不改变项目模式。 */
+export type ApprovalOptionId = 'allowOnce' | 'allowSession' | 'deny'
+export interface ApprovalOption { option_id: ApprovalOptionId; label: string; content?: string }
+
 /**
  * 类型定义：与后端 SSE / 回放契约一一对应（docs/ARCHITECTURE.md §6）。
  * 后端字段用 epoch 毫秒浮点，前端保持一致不做转换。
@@ -94,8 +98,7 @@ export interface SessionDetail {
     input: unknown
     reason: string
     status: string
-    options?: { option_id: string; label: string; content?: string }[]
-    full_access?: boolean
+    options?: ApprovalOption[]
     time?: number
   } | null
 }
@@ -122,8 +125,7 @@ export type SseEvent =
       tool: string
       input: unknown
       reason: string
-      options: { option_id: string; label: string; content?: string }[] // 动态选项（allowOnce/fullAccess/allowAlways/deny）
-      full_access: boolean // 是否投放"完全访问"（子助手请求不投放）
+      options: ApprovalOption[] // 仅本次 / 本会话 / 拒绝
     }
   | { type: 'approval_resolved'; request_id: string; approved: boolean }
   | { type: 'token_count'; input_tokens: number; output_tokens: number }

@@ -5,5 +5,5 @@ import type { PendingApproval } from '../components/ApprovalModal'
 export function pendingFromDetail(detail: SessionDetail | null): PendingApproval | null {
   const p = detail?.pending_approval
   if (!p || p.status !== 'requested') return null
-  return { request_id: p.request_id, tool: p.tool, input: p.input, reason: p.reason, options: p.options ?? [], full_access: p.full_access ?? false }
+  return { request_id: p.request_id, tool: p.tool, input: p.input, reason: p.reason, options: p.options ?? [] }
 }

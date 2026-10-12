@@ -79,10 +79,10 @@ def save_permission_rules(data_dir, ruleset: dict, *, project_id: str | None = N
 
 
 def add_permission_rule(data_dir, behavior: str, tool: str, content: str | None, *, project_id: str | None = None) -> dict:
-    """保留现有审批调用契约，追加项目规则；同工具/内容去重。"""
+    """保留项目规则管理兼容；交互审批不调用，同工具/内容去重。"""
     if behavior not in ("allow", "deny"):
         raise ValueError(f"非法规则行为：{behavior}")
-    # 同进程审批端点可能并行执行，串行追加避免读改写丢失另一条规则。
+    # 同进程规则管理可能并行执行，串行追加避免读改写丢失另一条规则。
     with _RULE_LOCK:
         ruleset = load_permission_rules(data_dir, project_id=project_id)
         rule = {"toolName": tool}

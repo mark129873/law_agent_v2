@@ -12,7 +12,7 @@
 import { useCallback, useRef, useState } from 'react'
 
 import { streamRegenerate, streamTurn, type ExecutionDraft } from '../api/client'
-import type { SseEvent, TurnData, WorkItem } from '../types'
+import type { ApprovalOption, SseEvent, TurnData, WorkItem } from '../types'
 
 /** 实时流中的未决审批（弹窗数据源；刷新恢复走回放的 pending_approval，形状一致） */
 export interface LivePendingApproval {
@@ -20,8 +20,7 @@ export interface LivePendingApproval {
   tool: string
   input: unknown
   reason: string
-  options: { option_id: string; label: string; content?: string }[]
-  full_access: boolean
+  options: ApprovalOption[]
 }
 
 /** 流结束时的身份快照；异步GET只能收尾这个版本、这个turn。 */
@@ -183,7 +182,6 @@ export function useSessionStream(sessionId: string | null) {
             input: event.input,
             reason: event.reason,
             options: event.options,
-            full_access: event.full_access,
           })
           pendingApprovalRef.current = { request_id: event.request_id }
           break

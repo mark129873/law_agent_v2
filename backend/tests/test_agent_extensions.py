@@ -273,7 +273,7 @@ def test_subtask_tokens_counted(recorder) -> None:
 
 
 def test_subtask_refusal_preserves_isolation(recorder) -> None:
-    """复用审批后，子助手仍限制选项、保留独立历史，并把拒绝反馈喂回模型。"""
+    """复用审批后，子助手共用审批、保留独立历史，并把拒绝反馈喂回模型。"""
     client = ScriptClient([
         [{"type": "tool_use", "id": "st", "name": "subtask", "input": {"goal": "写入说明"}},
          {"type": "usage", "input_tokens": 50, "output_tokens": 1}],
@@ -294,7 +294,7 @@ def test_subtask_refusal_preserves_isolation(recorder) -> None:
 
     deps.approver = deny
     events = _run(deps)
-    assert options == [{"allow_full_access": False}]
+    assert options == [{}]
     assert not (workspace_root() / "denied.txt").exists()
     assert client.calls[1]["messages"] == [{"role": "user", "content": "写入说明"}]
     assert not {"subtask", "todo_write"} & {t["name"] for t in client.calls[1]["tools"]}

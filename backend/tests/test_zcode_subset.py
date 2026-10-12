@@ -88,12 +88,12 @@ def test_approval_refresh_but_no_restart_history(store_db):
         r=TurnRecorder(store_db,'s','m',100); r.begin_turn('等待')
         queue=asyncio.Queue()
         callback=approvals.InteractiveApprover(store_db,'s',r,queue)
-        task=asyncio.create_task(callback('bash',{'command':'echo x > a'},'写文件',allow_full_access=False))
+        task=asyncio.create_task(callback('bash',{'command':'echo x > a'},'写文件'))
         event=await queue.get()
         snap=replay.load_replay(store_db,'s')
-        assert snap['pending_approval']['full_access'] is False
-        assert not any(o['option_id']=='fullAccess' for o in snap['pending_approval']['options'])
-        approvals.resolve(event['request_id'],True)
+        assert 'full_access' not in snap['pending_approval']
+        assert [o['option_id'] for o in snap['pending_approval']['options']] == ['allowOnce', 'allowSession', 'deny']
+        approvals.resolve(event['request_id'],'allowOnce',session_id='s')
         await task
         assert replay.load_replay(store_db,'s')['pending_approval'] is None
         approvals._events.clear(); approvals._pending.clear()

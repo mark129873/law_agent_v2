@@ -11,8 +11,7 @@
   硬拒(deny-list+路径越界) → yolo 直通 → deny 规则
   → ask 规则 → allow 规则 → edit 检查 → build 检查。
 
-安全约束（ZCode 同款）：高危根命令（rm/sudo/del…）不允许生成前缀规则，
-"总是允许"退化为整条命令精确匹配——否则 `rm:*` 会连 `rm -rf /` 一起放行。
+会话授权另由 session_permissions 精确匹配；不再由审批生成项目永久规则。
 """
 
 import re
@@ -31,13 +30,6 @@ _DENY_PATTERNS: list[str] = [
     "shutdown -s",
     "rd /s /q c:\\",
 ]
-
-# 高危根命令："总是允许"对它们只生成整条精确规则，绝不生成前缀规则
-_HIGH_RISK_ROOTS = frozenset(
-    {"rm", "del", "erase", "rd", "rmdir", "remove-item", "unlink", "sudo",
-     "chmod", "format", "diskpart", "iex", "invoke-expression", "reg",
-     "net", "set-executionpolicy", "shutdown"}
-)
 
 # 只接受无需 shell 求值的字面量；复杂语法宁可多问一次，也不猜测只读。
 _READONLY_ROOTS = frozenset({
@@ -173,24 +165,6 @@ def match_rule(rules: dict, behavior: str, tool_name: str, tool_input: dict) -> 
         if not content or _match_content(content, subject):
             return rule
     return None
-
-
-def derive_rule(tool_name: str, tool_input: dict) -> dict | None:
-    """从本次请求推导"总是允许"规则。
-
-    bash：高危根命令（rm/sudo…）→ 整条命令精确规则（ZCode 安全约束：
-    高危根命令绝不生成前缀规则）；其他 → 首词前缀规则 `cmd:*`。
-    非 bash 工具返回 None（v1 只有 bash 会触发审批）。
-    """
-    if tool_name != "bash":
-        return None
-    subject = _subject(tool_input).strip()
-    if not subject:
-        return None
-    root = subject.split()[0].lower()
-    if root in _HIGH_RISK_ROOTS:
-        return {"toolName": tool_name, "ruleContent": subject}
-    return {"toolName": tool_name, "ruleContent": root + ":*"}
 
 
 # ---------- 评估 ----------

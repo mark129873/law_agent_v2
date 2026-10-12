@@ -201,7 +201,7 @@ def load_replay(
         result_turns.append(bucket)
 
     # 未决审批：用上面去重后的最新状态（仍是 requested 即未决）。
-    # 附上动态选项与 full_access 标志——刷新恢复的弹窗与实时流同构。
+    # 附上相同三项审批选项——刷新恢复的弹窗与实时流同构。
     pending = next(
         (a for a in latest_by_request.values() if a.get("status") == "requested" and get_request(a["request_id"])), None
     )

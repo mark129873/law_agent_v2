@@ -17,9 +17,9 @@ def seed_record(db, sid, kind, data, turn_id='', **kwargs):
         rid = data['request_id']
         approvals._events.setdefault(sid, {})[rid] = data
         if data['status'] == 'requested':
-            approvals.register(rid)
+            approvals.register(rid, session_id=sid)
         else:
-            approvals.resolve(rid, data['status'] == 'approved')
+            approvals.resolve(rid, 'allowOnce' if data['status'] == 'approved' else 'deny', session_id=sid)
         return data
     if kind == 'compaction':
         return store.save_compaction(db, sid, label, data['before_sequence'], data['summary_text'],

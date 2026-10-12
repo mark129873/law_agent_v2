@@ -111,6 +111,7 @@ def delete_session(session_id: str, db_session: DbSession = Depends(db.get_db)) 
         raise HTTPException(status_code=409, detail="会话正在生成中，请先停止")
     if not store.soft_delete_session(db_session, session_id):
         raise HTTPException(status_code=404, detail="会话不存在")
+    approvals.forget_session(session_id)
     return {"ok": True}
 
 
@@ -259,12 +260,7 @@ async def stop_turn(session_id: str) -> dict:
 
 
 class ApprovalIn(BaseModel):
-    """POST /approval 请求体。
-
-    option_id：allowOnce / allowAlways / deny / fullAccess（弹窗动态选项的应答）；
-    approved：旧客户端兼容字段（True→allowOnce，False→deny）；
-    feedback：拒绝时的用户反馈（≤4096 字符，拼进喂回模型的理由）。
-    """
+    """三项审批；旧 approved 布尔字段仅兼容本次允许/拒绝，不授予会话权限。"""
 
     request_id: str
     option_id: str | None = None
@@ -274,50 +270,19 @@ class ApprovalIn(BaseModel):
 
 @router.post("/{session_id}/approval")
 async def submit_approval(session_id: str, body: ApprovalIn) -> dict:
-    """提交审批决定：唤醒正在等待的 turn（与连接无关，刷新后仍可提交）。
-
-    选项语义（ZCode 同款）：
-    - allowOnce：仅本次放行；
-    - allowAlways：从注册表取 tool/input 推导规则并落盘，再放行本次；
-    - fullAccess：会话协作模式切 yolo 持久化（一次性应答，不写规则），再放行本次；
-    - deny / 未知 optionId：拒绝（未知 id 兜底拒绝，ZCode 同款）。
-    """
-    from app.agent.permission_service import derive_rule
-    from app.sessions import approvals, execution_state
-
-    # 与 stop/等待协程共用事件循环；有效性检查、配置写入和 resolve 之间不让出执行权。
-    option_id = body.option_id or ("allowOnce" if body.approved else "deny")
+    """原子校验归属/选项并唤醒；内存授权由等待方在停止检查后保存。"""
+    info = approvals.get_request(body.request_id)
+    if info is None or info["session_id"] != session_id:
+        raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
+    # 显式传空字符串也是未知选项，不能通过布尔兼容字段意外放行。
+    option_id = body.option_id
+    if option_id is None and body.approved is not None:
+        option_id = "allowOnce" if body.approved else "deny"
+    if option_id not in {o["option_id"] for o in info["options"]}:
+        raise HTTPException(status_code=400, detail="不支持的审批选项")
+    if option_id == "allowSession" and info["scope"] is None:
+        raise HTTPException(status_code=400, detail="无法确定会话授权范围")
     feedback = (body.feedback or "").strip()[:4096] or None
-
-    if option_id == "fullAccess":
-        info = approvals.get_request(body.request_id)
-        if info is None or not info.get("full_access"):
-            raise HTTPException(status_code=404, detail="审批请求不存在或不支持完全访问")
-        execution_state.save_execution_state(settings.data_dir, "yolo")
-        if not approvals.resolve(body.request_id, True):
-            raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
-        logger.info("完全访问已授权 session=%s", session_id)
-        return {"ok": True, "mode": "yolo"}
-
-    if option_id == "allowAlways":
-        info = approvals.get_request(body.request_id)
-        if info is None:
-            raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
-        rule = derive_rule(info.get("tool") or "", info.get("input") or {})
-        if rule:
-            execution_state.add_permission_rule(
-                settings.data_dir, "allow", rule["toolName"], rule["ruleContent"]
-            )
-            logger.info("审批规则已保存 tool=%s content=%s", rule["toolName"], rule["ruleContent"])
-
-    if option_id == "allowOnce" or option_id == "allowAlways":
-        approved, used_feedback = True, None
-    elif option_id == "deny":
-        approved, used_feedback = False, feedback
-    else:
-        # 未知 optionId 一律拒绝兜底（ZCode 同款）
-        approved, used_feedback = False, feedback
-
-    if not approvals.resolve(body.request_id, approved, used_feedback):
+    if not approvals.resolve(body.request_id, option_id, session_id=session_id, feedback=feedback):
         raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
     return {"ok": True}

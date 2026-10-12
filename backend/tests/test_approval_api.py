@@ -3,6 +3,8 @@ from storage_seed import seed_record
 
 import asyncio
 
+import pytest
+
 from app.sessions import approvals, replay, store
 from app.sessions.approvals import InteractiveApprover
 from app.sessions.recorder import TurnRecorder
@@ -15,12 +17,12 @@ def _recorder(store_db) -> TurnRecorder:
 def test_approval_registry_resolve_once(store_db) -> None:
     """注册表：resolve 唤醒等待方；二次 resolve 返回 False（已决不可再改）。"""
     async def scenario():
-        slot = approvals.register("r1")
-        assert approvals.resolve("r1", True) is True
+        slot = approvals.register("r1", session_id="s1")
+        assert approvals.resolve("r1", "allowOnce", session_id="s1") is True
         await slot["event"].wait()
         assert slot["approved"] is True
-        assert approvals.resolve("r1", False) is False  # 已移除
-        assert approvals.resolve("unknown", True) is False
+        assert approvals.resolve("r1", "deny", session_id="s1") is False  # 已移除
+        assert approvals.resolve("unknown", "allowOnce", session_id="s1") is False
 
     asyncio.run(scenario())
 
@@ -41,7 +43,7 @@ def test_interactive_approver_full_flow(store_db) -> None:
         assert request_event["tool"] == "bash"
         request_id = request_event["request_id"]
 
-        approvals.resolve(request_id, False)
+        approvals.resolve(request_id, "deny", session_id="s1")
         outcome = await asyncio.wait_for(wait_task, timeout=5)
 
         resolved_event = await asyncio.wait_for(queue.get(), timeout=5)
@@ -68,7 +70,7 @@ def test_interactive_approver_approved(store_db) -> None:
 
         wait_task = asyncio.create_task(approver("bash", {"command": "Remove-Item tmp.txt"}, "删除类命令"))
         request_event = await asyncio.wait_for(queue.get(), timeout=5)
-        approvals.resolve(request_event["request_id"], True)
+        approvals.resolve(request_event["request_id"], "allowOnce", session_id="s1")
         outcome = await asyncio.wait_for(wait_task, timeout=5)
         assert outcome["approved"] is True
 
@@ -86,7 +88,7 @@ def test_approval_endpoint(client, store_db) -> None:
     ).status_code == 404
 
     async def register_slot():
-        return approvals.register("r9")
+        return approvals.register("r9", session_id=sid)
 
     slot = asyncio.run(register_slot())
     resp = client.post(f"/api/sessions/{sid}/approval", json={"request_id": "r9", "approved": True})
@@ -123,11 +125,11 @@ def test_pending_approval_survives_in_replay(store_db) -> None:
     assert result["pending_approval"]["request_id"] == "r-refresh"
 
 
-# ---------- 阶段2：动态选项 / 总是允许 / 完全访问 ----------
+# ---------- 三项审批 / 最小会话范围 / 旧选项拒绝 ----------
 
 
 def test_approval_request_carries_options(store_db) -> None:
-    """bash 的 approval_request 携带动态选项；高危根命令退化为整条精确规则。"""
+    """审批请求固定三项；命令会话范围为整条精确规则。"""
     async def scenario():
         store.ensure_session(store_db, "s1", "test-model", "删文件")
         recorder = _recorder(store_db)
@@ -137,19 +139,19 @@ def test_approval_request_carries_options(store_db) -> None:
 
         wait_task = asyncio.create_task(approver("bash", {"command": "del a.txt"}, "删除类命令"))
         request_event = await asyncio.wait_for(queue.get(), timeout=5)
-        approvals.resolve(request_event["request_id"], False)
+        approvals.resolve(request_event["request_id"], "deny", session_id="s1")
         await asyncio.wait_for(wait_task, timeout=5)
 
         ids = [o["option_id"] for o in request_event["options"]]
-        assert ids == ["allowOnce", "fullAccess", "allowAlways", "deny"]
-        always = next(o for o in request_event["options"] if o["option_id"] == "allowAlways")
-        assert always["content"] == "del a.txt"  # 高危根命令退化为整条精确
+        assert ids == ["allowOnce", "allowSession", "deny"]
+        always = next(o for o in request_event["options"] if o["option_id"] == "allowSession")
+        assert always["content"] == '完整命令参数（精确匹配）：{"command": "del a.txt"}'
 
     asyncio.run(scenario())
 
 
-def test_subagent_call_suppresses_full_access(store_db) -> None:
-    """子助手调用（allow_full_access=False）：选项不投放"完全访问"。"""
+def test_same_options_for_every_approver(store_db) -> None:
+    """所有审批回调使用同样三项，不暴露模式或永久授权。"""
     async def scenario():
         store.ensure_session(store_db, "s1", "test-model", "删文件")
         recorder = _recorder(store_db)
@@ -158,58 +160,30 @@ def test_subagent_call_suppresses_full_access(store_db) -> None:
         approver = InteractiveApprover(store_db, "s1", recorder, queue)
 
         wait_task = asyncio.create_task(approver(
-            "bash", {"command": "echo hi"}, "需要确认", allow_full_access=False))
+            "bash", {"command": "echo hi"}, "需要确认"))
         request_event = await asyncio.wait_for(queue.get(), timeout=5)
-        approvals.resolve(request_event["request_id"], True)
+        approvals.resolve(request_event["request_id"], "allowOnce", session_id="s1")
         await asyncio.wait_for(wait_task, timeout=5)
 
         ids = [o["option_id"] for o in request_event["options"]]
-        # 只抑制 fullAccess；echo 非高危根词仍有 allowAlways 前缀规则
-        assert ids == ["allowOnce", "allowAlways", "deny"]
+        assert ids == ["allowOnce", "allowSession", "deny"]
 
     asyncio.run(scenario())
 
 
-def test_allow_always_saves_rule(client) -> None:
-    """端点 allowAlways：规则落盘（echo→echo:* 前缀）并放行本次。"""
+@pytest.mark.parametrize("option", ["allowAlways", "fullAccess", "weird", "", "approve"])
+def test_removed_or_unknown_option_has_no_effect(client, option) -> None:
+    """旧/未知选项失败且保留待决请求，不写规则、不改模式、不会变成拒绝应答。"""
     from app.config import settings
-    from app.sessions import execution_state
+    from app.sessions import execution_state, session_permissions
 
     sid = client.post("/api/sessions").json()["id"]
-    slot = approvals.register("r-always", "bash", {"command": "echo hi"})
-    resp = client.post(
-        f"/api/sessions/{sid}/approval",
-        json={"request_id": "r-always", "option_id": "allowAlways"},
-    )
-    assert resp.json() == {"ok": True}
-    assert slot["approved"] is True
-    rules = execution_state.load_permission_rules(settings.data_dir)
-    assert {"toolName": "bash", "ruleContent": "echo:*"} in rules["allow"]
-
-
-def test_full_access_switches_yolo(client) -> None:
-    """端点 fullAccess：会话模式切 yolo 持久化并放行本次。"""
-    from app.config import settings
-    from app.sessions import execution_state
-
-    sid = client.post("/api/sessions").json()["id"]
-    slot = approvals.register("r-fa", "bash", {"command": "echo hi"}, full_access=True)
-    resp = client.post(
-        f"/api/sessions/{sid}/approval",
-        json={"request_id": "r-fa", "option_id": "fullAccess"},
-    )
-    assert resp.json() == {"ok": True, "mode": "yolo"}
-    assert slot["approved"] is True
-    assert execution_state.load_execution_state(settings.data_dir)["mode"] == "yolo"
-
-
-def test_unknown_option_denies(client) -> None:
-    """未知 optionId 一律拒绝兜底（ZCode 同款）。"""
-    sid = client.post("/api/sessions").json()["id"]
-    slot = approvals.register("r-unknown", "bash", {"command": "echo hi"})
-    resp = client.post(
-        f"/api/sessions/{sid}/approval",
-        json={"request_id": "r-unknown", "option_id": "weird"},
-    )
-    assert resp.json() == {"ok": True}
-    assert slot["approved"] is False
+    slot = approvals.register("r-invalid", "bash", {"command": "echo hi"}, session_id=sid)
+    response = client.post(f"/api/sessions/{sid}/approval", json={
+        "request_id": "r-invalid", "option_id": option, "approved": True})
+    assert response.status_code == 400
+    assert approvals.get_request("r-invalid") is slot
+    assert not slot["approved"] and not slot["event"].is_set()
+    assert not execution_state.load_permission_rules(settings.data_dir)["allow"]
+    assert execution_state.load_execution_state(settings.data_dir)["mode"] == "build"
+    assert not session_permissions._grants

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.agent.loop import TurnDeps, run_turn
 from app.api.sessions import ApprovalIn, submit_approval
 from app.config import settings
-from app.sessions import approvals, execution_state, replay
+from app.sessions import approvals, execution_state, replay, session_permissions
 from app.sessions.approvals import InteractiveApprover
 from app.sessions.recorder import TurnRecorder
 
@@ -52,28 +52,29 @@ def test_waiting_approval_stops_without_executing(store_db, monkeypatch, child, 
                 break
         request_id = event["request_id"]
         if race == "allow_then_stop":
-            assert approvals.resolve(request_id, True)
+            assert approvals.resolve(request_id, "allowSession", session_id="cancel")
         stop.set()
         if race == "stop_then_allow":
-            assert not approvals.resolve(request_id, True)
+            assert not approvals.resolve(request_id, "allowSession", session_id="cancel")
         events = await asyncio.wait_for(task, 1)
         assert events[-1]["state"] == "stopped"
         assert not executed
+        assert not session_permissions._grants
         assert fake.calls == (2 if child else 1)
         assert approvals.get_request(request_id) is None
-        assert not approvals.resolve(request_id, True)
+        assert not approvals.resolve(request_id, "allowSession", session_id="cancel")
         assert replay.load_replay(store_db, "cancel")["pending_approval"] is None
         assert not [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("option", ["allowOnce", "fullAccess", "allowAlways"])
+@pytest.mark.parametrize("option", ["allowOnce", "allowSession", "fullAccess", "allowAlways"])
 def test_late_api_approval_cannot_persist_authorization(store_db, option):
     """停止已置位但等待任务未调度时，API也须拒绝，不能先写yolo/规则。"""
     async def scenario():
         stop = asyncio.Event()
-        approvals.register("late", "bash", {"command": "echo hi"}, full_access=True, stop_event=stop)
+        approvals.register("late", "bash", {"command": "echo hi"}, session_id="cancel", stop_event=stop)
         stop.set()
         with pytest.raises(HTTPException) as exc:
             await submit_approval("cancel", ApprovalIn(request_id="late", option_id=option))

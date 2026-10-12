@@ -51,15 +51,16 @@ def test_build_keeps_ordinary_approval_and_todo(tmp_data_dir) -> None:
         assert check_permission("build", {}, tool, {"path": "a.txt"})["decision"] == "allow"
     assert check_permission("build", {}, "write_file", {"path": "a.txt"})["decision"] == "ask"
     assert [o["option_id"] for o in approvals.build_options("write_file", {})] == [
-        "allowOnce", "fullAccess", "deny"]
+        "allowOnce", "allowSession", "deny"]
 
 
 def test_removed_approval_option_cannot_authorize(client) -> None:
     """旧计划的approve不再是授权选项，按普通未知选项拒绝。"""
-    slot = approvals.register("removed-plan-option", "write_file", {"path": "a.txt"})
+    slot = approvals.register("removed-plan-option", "write_file", {"path": "a.txt"}, session_id="test")
     response = client.post("/api/sessions/test/approval", json={
         "request_id": "removed-plan-option", "option_id": "approve"})
-    assert response.json() == {"ok": True}
+    assert response.status_code == 400
+    assert not slot["event"].is_set()
     assert slot["approved"] is False
 
 

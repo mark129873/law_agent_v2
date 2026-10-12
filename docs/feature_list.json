@@ -291,5 +291,13 @@
       }
     ],
     "boundaries": "无真实模型、无schema/README改动；不新增工具输出归档，当前轮自身过大明确失败；PowerShell实机未验；浏览器为内存API模拟，非后端全链路。未提交/push，待审核。"
+  },
+  "session_approval_review": {
+    "date": "2026-10-12",
+    "baseline": "9166452",
+    "status": "passing",
+    "scope": "固定三项审批；精确范围的进程内会话授权；项目模式/ruleset兼容；API归属、重放和停止保护",
+    "evidence": "后端266过；前端11项回归、typecheck/lint/build过，主包359.12kB；隔离启动health/空列表/build通过。云浏览器真App＋假SSE验证三项、续流/拒绝、刷新恢复和旧GET竞态，5截图。",
+    "boundaries": "同session跨turn/刷新有效，重启/删除清空；命令不生成前缀。保留原yolo优先级；README/schema不改；无真实模型调用，Windows实机未验。未commit/push，待父级发布。"
   }
 }
