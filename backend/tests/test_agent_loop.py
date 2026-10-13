@@ -71,7 +71,8 @@ def test_plain_text_turn(recorder) -> None:
     assert _kinds(events)[0] == "turn_started"
     assert _kinds(events)[-1] == "turn_completed"
     assert events[-1]["state"] == "success"
-    assert {"type": "delta", "text": "你好"} in events
+    delta = next(e for e in events if e["type"] == "delta")
+    assert delta["text"] == "你好" and delta["message_id"]
     assert events[-1]["active_ms"] >= 0
 
     # 落盘：final_text 与 turn 事实、会话 token 累计
@@ -93,7 +94,8 @@ def test_tool_roundtrip(recorder) -> None:
         "input": {"path": "a.txt", "content": "hello"},
     }
     client = FakeClient([
-        [{"type": "text_delta", "text": "我写个文件"}, tool_use, {"type": "usage", "input_tokens": 20, "output_tokens": 8}],
+        [{"type": "text_delta", "text": "我写个"}, {"type": "text_delta", "text": "文件"},
+         tool_use, {"type": "usage", "input_tokens": 20, "output_tokens": 8}],
         [{"type": "text_delta", "text": "写好了"}, {"type": "usage", "input_tokens": 30, "output_tokens": 6}],
     ])
     deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试",
@@ -106,6 +108,10 @@ def test_tool_roundtrip(recorder) -> None:
     assert done["status"] == "completed" and "已写入" in done["output_preview"]
     assert kinds[-1] == "turn_completed" and events[-1]["state"] == "success"
     assert recorder.tokens_used == 14
+    # 同一步的增量共享消息 ID，下一步变化；前端由此区分过程文字和最终答案。
+    deltas = [e for e in events if e["type"] == "delta"]
+    assert deltas[0]["message_id"] == deltas[1]["message_id"]
+    assert deltas[1]["message_id"] != deltas[2]["message_id"]
 
     # 第二次调用时历史已含 tool_use 与 tool_result
     second_call_messages = client.calls[1]["messages"]
@@ -231,6 +237,37 @@ def test_llm_error_fails_turn(recorder) -> None:
     assert any(x["kind"] == "error" for x in result["turns"][0]["work_items"])
 
 
+def test_partial_llm_error_preserves_replay_and_history(recorder, monkeypatch) -> None:
+    """流报错保留已显示的正文；已接收的工具计划不能在不完整响应后执行。"""
+    from app.sessions import replay
+
+    executed = []
+    monkeypatch.setattr("app.agent.loop.execute_tool", lambda *args: executed.append(args) or "不应执行")
+
+    class BrokenStream:
+        calls = 0
+
+        async def stream(self, **kwargs):
+            self.calls += 1
+            yield {"type": "text_delta", "text": "已经得到的"}
+            yield {"type": "text_delta", "text": "部分结论"}
+            yield {"type": "tool_use", "id": "unexecuted", "name": "read_file", "input": {"path": "a"}}
+            raise RuntimeError("响应中断")
+
+    client = BrokenStream()
+    events = _run(TurnDeps(client=client, recorder=recorder, system_prompt="测试",
+                          history=[{"role": "user", "content": "分析资料"}]))
+    assert client.calls == 1 and not executed
+    assert events[-1]["state"] == "failed"
+    text = "".join(e["text"] for e in events if e["type"] == "delta")
+    restored = replay.load_replay(recorder.db, "s1")["turns"][0]
+    assert text == restored["final_text"] == "已经得到的部分结论"
+    assert [item["message"] for item in restored["work_items"] if item["kind"] == "error"] == ["响应中断"]
+    assert replay.load_history(recorder.db, "s1")[-1] == {
+        "role": "assistant", "content": [{"type": "text", "text": text}],
+    }
+
+
 def test_stop_hook_can_continue_turn(recorder, monkeypatch) -> None:
     """抽取模型步后，Stop注入仍进入下一次调用，最终回复正常回放。"""
     from app.agent import hooks
@@ -270,6 +307,13 @@ def test_while_loop_step_limit(recorder, monkeypatch, limit) -> None:
     assert events[-1]["state"] == "failed"
     assert sum(e["type"] == "turn_completed" for e in events) == 1
     assert any(e["type"] == "error" and str(limit) in e["message"] for e in events)
+    # 包括零步失败：完整刷新后的回放仍含明确原因，不依赖当前页面内存错误。
+    from app.sessions import replay
+    turn = replay.load_replay(recorder.db, "s1")["turns"][0]
+    assert turn["state"] == "failed"
+    assert [item["message"] for item in turn["work_items"] if item["kind"] == "error"] == [
+        f"达到单轮步数上限 {limit}",
+    ]
 
 
 def test_while_loop_last_allowed_step_can_succeed(recorder, monkeypatch) -> None:

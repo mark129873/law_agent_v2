@@ -15,6 +15,7 @@ allow 执行 / deny 拒绝（Error 字符串喂回）/ ask 走 deps.approver 交
 
 import asyncio
 import logging
+from contextlib import aclosing
 
 from app.agent.model_call import record_model_step
 from app.agent.tools import TOOL_HANDLERS, TOOLS, execute_tool
@@ -63,23 +64,31 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
             with record_model_step(
                 deps, SUBTASK_SYSTEM_PROMPT, child_history, SUBTASK_TOOLS, subtask_id=subtask_id
             ) as reply:
-                async for event in deps.client.stream(
+                # 逐事件检查停止；离开流时立即关闭 SDK 响应，避免继续消费子模型输出。
+                async with aclosing(deps.client.stream(
                     system=SUBTASK_SYSTEM_PROMPT, messages=child_history, tools=SUBTASK_TOOLS
-                ):
-                    reply.accept(event)
-                    if event.get("type") == "usage":
-                        # 子循环 token 与主循环同口径：计入会话统计（add_usage），
-                        # 并发 token_count 事件给前端（经生成器逐层转发出 SSE）。
-                        # 注意不喂 deps.last_input_tokens——那是主循环 compact 预算的口径
-                        deps.recorder.add_usage(**reply.usage, subtask=True)
-                        yield {"type": "token_count", **reply.usage}
-            text_acc, tool_uses = reply.text, reply.tool_uses
-
-            if text_acc:
-                output_acc.append(text_acc)
-                await deps.queue.put(
-                    {"type": "subtask_delta", "subtask_id": subtask_id, "text": text_acc}
-                )
+                )) as stream:
+                    async for event in stream:
+                        if deps.stop_flag():
+                            status = "stopped"
+                            break
+                        reply.accept(event)
+                        if event.get("type") == "text_delta":
+                            # 收到就保存并转发，断线或停止也能保留已经显示的部分。
+                            text = event.get("text", "")
+                            output_acc.append(text)
+                            await deps.queue.put(
+                                {"type": "subtask_delta", "subtask_id": subtask_id, "text": text}
+                            )
+                        elif event.get("type") == "usage":
+                            # 子模型用量计入父轮，但不覆盖主模型的上下文预算。
+                            deps.recorder.add_usage(**reply.usage, subtask=True)
+                            yield {"type": "token_count", **reply.usage}
+            if deps.stop_flag():
+                status = "stopped"
+            if status == "stopped":
+                break
+            tool_uses = reply.tool_uses
             if not tool_uses:
                 break
 
@@ -126,4 +135,4 @@ async def run_subtask_events(deps, message_id: str, tool_input: dict):
         output = "Error: " + output
 
     await deps.queue.put({"type": "subtask_completed", "subtask_id": subtask_id, "status": status})
-    yield {"_subtask_output": output}
+    yield {"_subtask_output": output, "_subtask_status": status}

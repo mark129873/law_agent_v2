@@ -11,7 +11,7 @@
 
 import shutil
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
 
 from app.agent.skills import tool_load_skill
@@ -36,6 +36,23 @@ def safe_path(relative: str) -> Path:
     if not (target == root or target.is_relative_to(root)):
         raise ValueError(f"路径越界：{relative} 必须位于工作区内")
     return target
+
+
+def safe_glob_pattern(pattern: str) -> str:
+    """glob 只接受工作区相对模式；预检固定前缀，避免显式进入外部链接。"""
+    # 两个平台都识别斜杠/盘符，不能让 Windows 风格的越界模式在 Linux 漏检。
+    normalized = pattern.replace("\\", "/")
+    parts = PurePosixPath(normalized).parts
+    windows = PureWindowsPath(normalized)
+    if not normalized or windows.drive or windows.root or ".." in parts:
+        raise ValueError("glob 模式必须是工作区内的相对路径，不能包含父级路径")
+    prefix = []
+    for part in parts:
+        if any(char in part for char in "*?["):
+            break
+        prefix.append(part)
+    safe_path("/".join(prefix))
+    return normalized
 
 
 # ---------- 工具实现（全部同步函数，主循环用线程池调） ----------
@@ -63,8 +80,11 @@ def tool_bash(command: str) -> str:
             errors="replace",
         )
         output = (completed.stdout or "") + (completed.stderr or "")
-        exit_note = "" if completed.returncode == 0 else f"\n[exit code: {completed.returncode}]"
-        return _tail(output.rstrip()) + exit_note
+        output = _tail(output.rstrip())
+        if completed.returncode != 0:
+            # 主/子循环统一识别 Error:；前缀放在截断之后，避免长输出丢失失败标识。
+            return f"Error: 命令退出码 {completed.returncode}\n{output}\n[exit code: {completed.returncode}]"
+        return output
     except subprocess.TimeoutExpired:
         return f"Error: 命令超时（>{settings.bash_timeout}s）"
     except Exception as exc:  # 兜底：任何执行环境问题都转字符串喂回模型
@@ -118,10 +138,16 @@ def tool_glob(pattern: str) -> str:
     输出统一用正斜杠：模型更常写 / 风格路径，Windows 的 \\ 会误导它。
     """
     try:
-        root = workspace_root()
-        matches = sorted(
-            p.relative_to(root).as_posix() for p in root.glob(pattern) if p.is_file()
-        )
+        pattern = safe_glob_pattern(pattern)
+        root = workspace_root().resolve()
+        matches = []
+        for path in root.glob(pattern):
+            # 通配符也可能命中符号链接；输出前再验真实目标，不能泄漏外部文件名。
+            if not path.resolve().is_relative_to(root):
+                raise ValueError("glob 匹配越出工作区，请缩小匹配范围")
+            if path.is_file():
+                matches.append(path.relative_to(root).as_posix())
+        matches.sort()
         if not matches:
             return "(无匹配文件)"
         return _tail("\n".join(matches), _READ_LIMIT)

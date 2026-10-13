@@ -159,6 +159,11 @@ def test_current_turn_too_large_fails_without_truncation(store_db, monkeypatch, 
     assert fake.calls == (0 if giant_request else 1)
     assert len(executed) == (0 if giant_request else 1)
     assert deps.history[0]["content"] == request
+    # 首轮本身过大与工具增长两种前置失败都持久化原因，重新打开会话仍可重试。
+    restored = replay.load_replay(store_db, "budget")["turns"][-1]
+    assert restored["state"] == "failed"
+    errors = [item["message"] for item in restored["work_items"] if item["kind"] == "error"]
+    assert len(errors) == 1 and "无法安全压缩" in errors[0]
     if not giant_request:
         assert deps.history[-1]["content"][0]["content"] == output
         assert output in str(replay.load_history(store_db, "budget"))

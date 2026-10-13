@@ -80,6 +80,12 @@ def get_session(db: DbSession, session_id: str) -> Session | None:
     return row
 
 
+def is_session_archived(db: DbSession, session_id: str) -> bool:
+    """区分已删除会话与尚未落库的 draft，供执行入口在任何写入前拒绝旧请求。"""
+    row = db.get(Session, session_id)
+    return row is not None and row.time_archived is not None
+
+
 def list_sessions(db: DbSession, limit: int = 200) -> list[Session]:
     """会话列表：过滤软删，按更新时间倒序（产品规则）。"""
     stmt = (
@@ -183,7 +189,8 @@ def upsert_part(db: DbSession, session_id: str, message_id: str, part_id: str,
             state["raw"] = _dump(state["input"])
         else:
             state["time"] = {"start": old_state.get("time", {}).get("start", now_ms())}
-            if status in ("completed", "error"):
+            # 子任务停止也是终态：保存已收到的部分输出，刷新后仍可查看。
+            if status in ("completed", "error", "stopped"):
                 state["time"]["end"] = now_ms()
                 if status == "error":
                     state["error"] = data.get("error", data.get("output", "")) or ""

@@ -74,8 +74,8 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
       {/* 用户消息（块外、块头上方） */}
       {turn.user_message && <UserBubble text={turn.user_message.text} />}
 
-      {/* 工作块：过程条目 ≥1 条时才渲染 */}
-      {turn.work_items.length > 0 && (
+      {/* 前置失败可能尚无工具/正文，也必须展示失败状态和重试入口。 */}
+      {(turn.work_items.length > 0 || turn.state === 'failed') && (
         <div className="work-card overflow-hidden">
           {/* 块头：状态 + 耗时 + 折叠开关 */}
           <button
@@ -102,6 +102,9 @@ export function TurnGroup({ turn, onOpenSubtask, onRegenerate }: TurnGroupProps)
           {/* 块内条目：按时间序平铺 */}
           {open && (
             <div className="space-y-3 border-t border-zinc-200/70 px-3 py-3">
+              {turn.state === 'failed' && !turn.work_items.some((item) => item.kind === 'error') && (
+                <ErrorCard message="本轮执行失败，请重试。" onRetry={onRegenerate} />
+              )}
               {aggregateItems(turn.work_items).map((entry) =>
                 entry.kind === 'group' ? (
                   <GroupCard key={`g-${entry.groupType}-${entry.items[0]?.id}`} group={entry} />

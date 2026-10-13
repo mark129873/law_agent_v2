@@ -102,11 +102,12 @@ def get_session_detail(session_id: str, db_session: DbSession = Depends(db.get_d
 
 
 @router.delete("/{session_id}")
-def delete_session(session_id: str, db_session: DbSession = Depends(db.get_db)) -> dict:
+async def delete_session(session_id: str, db_session: DbSession = Depends(db.get_db)) -> dict:
     """删除会话（用户视角永久删除，数据库软删标记）。
 
     进行中的会话不允许删（先停止），返回 409。
     """
+    # 与发送/重跑共用事件循环；检查到归档之间不让出执行，避免删除与登记相互穿插。
     if turn_manager.is_running(session_id):
         raise HTTPException(status_code=409, detail="会话正在生成中，请先停止")
     if not store.soft_delete_session(db_session, session_id):
@@ -125,10 +126,10 @@ async def start_turn(
     _check_llm_config()
     _check_not_running(session_id)
 
-    # 模式随提交生效（ZCode resolveSubmittedExecutionState 语义）：缺省沿用当前
-    if body.mode:
-        execution_state.save_execution_state(settings.data_dir, body.mode)
     with _prepare_turn(session_id) as (recorder, stop_event):
+        # 先拒绝已删会话，再应用模式；旧页面的失败请求不能改变项目权限。
+        if body.mode:
+            execution_state.save_execution_state(settings.data_dir, body.mode)
         history = replay.load_history(recorder.db, session_id)
         history.append({"role": "user", "content": body.text})
         return _turn_sse_response(client, recorder, history, stop_event)
@@ -164,6 +165,9 @@ def _prepare_turn(session_id: str):
     turn_db = db.new_session()
     recorder = None
     try:
+        # draft 尚无行，允许首次发送；已归档的真实会话则永远不能重新执行。
+        if store.is_session_archived(turn_db, session_id):
+            raise HTTPException(status_code=404, detail="会话不存在")
         recorder = TurnRecorder(turn_db, session_id, model=settings.model_id, max_tokens=settings.max_tokens)
         stop_event = turn_manager.register(session_id, recorder.turn_id)
         yield recorder, stop_event

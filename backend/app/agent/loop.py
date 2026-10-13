@@ -119,7 +119,10 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
         while True:
             # 与原步数边界一致：只有还需续轮时检查，末步正常结束仍算成功。
             if steps >= deps.max_steps:
-                yield {"type": "error", "message": f"达到单轮步数上限 {deps.max_steps}"}
+                error_message = f"达到单轮步数上限 {deps.max_steps}"
+                # 前置失败同样保存消息错误，刷新后仍可解释失败并显示重试入口。
+                deps.recorder.write_error_part(deps.recorder.step_message(), error_message)
+                yield {"type": "error", "message": error_message}
                 state = "failed"
                 break
             # ---- 检查点：停止 ----
@@ -136,7 +139,9 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                     break
                 if needs_compact(deps.settings, deps.history, deps.last_input_tokens,
                                  deps.measured_history_tokens):
-                    yield {"type": "error", "message": "上下文仍超过预算，无法安全压缩当前轮；请缩短请求或工具输出后重试。"}
+                    error_message = "上下文仍超过预算，无法安全压缩当前轮；请缩短请求或工具输出后重试。"
+                    deps.recorder.write_error_part(deps.recorder.step_message(), error_message)
+                    yield {"type": "error", "message": error_message}
                     state = "failed"
                     break
 
@@ -156,7 +161,8 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                         reply.accept(event)
                         kind = event.get("type")
                         if kind == "text_delta":
-                            yield {"type": "delta", "text": event.get("text", "")}
+                            # 消息 ID 标记模型步边界，让实时过程正文与最终回复的划分和回放一致。
+                            yield {"type": "delta", "text": event.get("text", ""), "message_id": message_id}
                         elif kind == "usage":
                             deps.recorder.add_usage(**reply.usage)
                             # 只有主循环input影响主上下文压缩预算。
@@ -179,6 +185,9 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 if is_context_limit_error(exc):
                     exc = RuntimeError(f"上下文超限且无法继续安全恢复；请缩短请求或工具输出后重试。原错误：{exc}")
                 logger.exception("LLM 调用失败")
+                # 已经推给用户的正文先落盘；异常不能使刷新和下一轮上下文丢失部分答案。
+                if reply is not None and reply.text:
+                    deps.recorder.write_text_part(message_id, reply.text)
                 deps.recorder.write_error_part(message_id, str(exc))
                 yield {"type": "error", "message": str(exc)}
                 state = "failed"
@@ -230,6 +239,10 @@ async def run_turn(deps: TurnDeps) -> AsyncIterator[dict]:
                 async for event in _execute_one(deps, message_id, tool_use, part_ids[tool_use["id"]], result_box):
                     yield event
                 tool_results.append(result_box["tool_result"])
+                # 子助手在流中停止后直接结束父轮，不能先命中下一步的预算或步数限制。
+                if deps.stop_flag():
+                    stop_requested = True
+                    break
 
             if stop_requested:
                 break
@@ -293,6 +306,7 @@ async def _execute_one(
             async for event in run_subtask_events(deps, message_id, tool_input):
                 if "_subtask_output" in event:
                     output = event["_subtask_output"]
+                    status = event.get("_subtask_status", status)
                 else:
                     yield event
         elif name == "todo_write":
@@ -304,7 +318,7 @@ async def _execute_one(
                 yield event
         else:
             output = await asyncio.to_thread(execute_tool, name, tool_input)
-        if _is_error_output(output):
+        if _is_error_output(output) and status != "stopped":
             status = "failed"
 
     duration_ms = (time.time() - started) * 1000
@@ -320,7 +334,7 @@ async def _execute_one(
         {"name": name, "tool_call_id": call_id, "status": status, "duration_ms": duration_ms},
     )
 
-    if status in ("completed", "failed"):
+    if status in ("completed", "failed", "stopped"):
         yield {"type": "tool_started", "tool_call_id": call_id, "name": name, "input": tool_input}
     yield {
         "type": "tool_completed",

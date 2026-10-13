@@ -25,6 +25,8 @@ import type { SessionDetail, TurnData } from '../types'
 export interface ChatAreaProps {
   detail: SessionDetail | null
   liveTurn: TurnData | null
+  /** 重跑替换的原轮次；本地用户消息尚无持久ID时仍可准确去重。 */
+  replacedTurnId?: string | null
   isStreaming: boolean
   currentId: string | null
   streamError: string | null
@@ -32,7 +34,7 @@ export interface ChatAreaProps {
   permission: PermissionState
   /** 实时流中的未决审批（useSessionStream） */
   livePendingApproval: LivePendingApproval | null
-  onSend: (text: string, execution: ExecutionDraft) => void
+  onSend: (text: string, execution: ExecutionDraft, onAccepted?: () => void) => void
   onStop: () => void
   /** 错误卡片"重试"→ 重新生成（保留用户消息重跑） */
   onRegenerate: () => void
@@ -43,13 +45,20 @@ export interface ChatAreaProps {
 
 export function ChatArea(props: ChatAreaProps) {
   const {
-    detail, liveTurn, isStreaming, currentId, streamError, livePendingApproval, permission,
+    detail, liveTurn, replacedTurnId, isStreaming, currentId, streamError, livePendingApproval, permission,
     onSend, onStop, onRegenerate, onApprovalResolved, onOpenSubtask,
   } = props
   const { sidebarOpen, toggleSidebar } = useShell()
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const turns = detail?.turns ?? []
+  // 回放与实时快照可能同时含同一轮；重跑则保留用户ID、换turn ID。
+  // 两种情况都由实时轮替换原卡片，避免重复用户气泡与旧答案并列。
+  const turns = (detail?.turns ?? []).filter((turn) => !liveTurn || (
+    turn.turn_id !== liveTurn.turn_id
+    && turn.turn_id !== replacedTurnId
+    && !(liveTurn.user_message?.id !== 'local' && liveTurn.user_message?.id
+      && turn.user_message?.id === liveTurn.user_message.id)
+  ))
   const hasContent = turns.length > 0 || liveTurn != null
 
   // 弹窗数据源：实时流优先；否则用回放恢复的未决审批（刷新场景）

@@ -331,6 +331,8 @@ def test_subtask_failure_records_partial_call(recorder) -> None:
     child_cards = [item for turn in restored["turns"] for item in turn["work_items"] if item["kind"] == "subtask"]
     assert child_cards[-1]["status"] == "failed"
     assert "子模型断线" in child_cards[-1]["output"]
+    assert "子助手部分输出" in child_cards[-1]["output"]
+    assert [e["text"] for e in events if e["type"] == "subtask_delta"] == ["子助手部分输出"]
     assert events[-1]["state"] == "success"
     path = Path(settings.modelio_dir) / "model-io-s1.jsonl"
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -339,3 +341,95 @@ def test_subtask_failure_records_partial_call(recorder) -> None:
     assert child["response"]["text"] == "子助手部分输出" and child["error"] == "子模型断线"
     assert child["usage"] == {"input_tokens": 8, "output_tokens": 3,
                               "cache_read_tokens": 1, "cache_creation_tokens": 2}
+
+
+@pytest.mark.parametrize("stop_midstream", [False, True])
+def test_subtask_incremental_stream_and_stop(recorder, monkeypatch, stop_midstream) -> None:
+    """真实队列在子模型结束前收到文字；停止及时关闭流并保存父子状态和部分结果。"""
+    from app.agent.subtask import SUBTASK_SYSTEM_PROMPT
+
+    executed = []
+    monkeypatch.setattr("app.agent.subtask.execute_tool", lambda *args: executed.append(args) or "不应执行")
+
+    async def scenario():
+        queue = asyncio.Queue()
+        release = asyncio.Event()
+        stop = asyncio.Event()
+
+        class PausedChild:
+            calls = 0
+            child_closed = False
+            reached_tail = False
+
+            async def stream(self, *, system, **kwargs):
+                self.calls += 1
+                if system == SUBTASK_SYSTEM_PROMPT:
+                    try:
+                        yield {"type": "text_delta", "text": "子助手第一段"}
+                        await release.wait()
+                        if stop_midstream:
+                            yield {"type": "tool_use", "id": "never", "name": "read_file",
+                                   "input": {"path": "never.txt"}}
+                        self.reached_tail = True
+                        yield {"type": "text_delta", "text": "第二段"}
+                    finally:
+                        self.child_closed = True
+                elif self.calls == 1:
+                    yield {"type": "tool_use", "id": "sub", "name": "subtask", "input": {"goal": "分段分析"}}
+                else:
+                    yield {"type": "text_delta", "text": "父助手完成"}
+
+        client = PausedChild()
+        deps = TurnDeps(client=client, recorder=recorder, system_prompt="测试", queue=queue,
+                        history=[{"role": "user", "content": "委派分析"}], stop_flag=stop.is_set,
+                        max_steps=1 if stop_midstream else 2)
+
+        async def pump():
+            async for event in run_turn(deps):
+                await queue.put(event)
+            await queue.put(None)
+
+        task = asyncio.create_task(pump())
+        events = []
+        try:
+            while True:
+                event = await asyncio.wait_for(queue.get(), 1)
+                events.append(event)
+                if event["type"] == "subtask_delta":
+                    break
+            assert events[-1]["text"] == "子助手第一段"
+            assert not client.child_closed and not client.reached_tail
+            if stop_midstream:
+                stop.set()
+            release.set()
+            await asyncio.wait_for(task, 1)
+            while not queue.empty():
+                event = queue.get_nowait()
+                if event is not None:
+                    events.append(event)
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        expected_status = "stopped" if stop_midstream else "completed"
+        expected_output = "子助手第一段" if stop_midstream else "子助手第一段第二段"
+        assert client.child_closed and client.reached_tail == (not stop_midstream)
+        assert client.calls == (2 if stop_midstream else 3)
+        assert not executed
+        assert [e["text"] for e in events if e["type"] == "subtask_delta"] == (
+            ["子助手第一段"] if stop_midstream else ["子助手第一段", "第二段"]
+        )
+        assert next(e for e in events if e["type"] == "subtask_completed")["status"] == expected_status
+        tool_done = next(e for e in events if e["type"] == "tool_completed" and e["name"] == "subtask")
+        assert tool_done["status"] == expected_status and tool_done["output_preview"] == expected_output
+        assert events[-1]["state"] == ("stopped" if stop_midstream else "success")
+
+        restored = replay.load_replay(recorder.db, "s1")["turns"][0]
+        card = next(item for item in restored["work_items"] if item["kind"] == "subtask")
+        assert restored["state"] == events[-1]["state"]
+        assert card["status"] == expected_status and card["output"] == expected_output
+        assert expected_output in str(replay.load_history(recorder.db, "s1"))
+
+    asyncio.run(scenario())

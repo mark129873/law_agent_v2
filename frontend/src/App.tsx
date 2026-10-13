@@ -21,6 +21,7 @@ import { SubtaskViewer, type SubtaskItem } from './components/SubtaskViewer'
 import { ApiError, createSession, getPermissionState, getSessionDetail, stopTurn, type ExecutionDraft, type PermissionState } from './api/client'
 import { ShellContext, useShell } from './ShellContext'
 import { useSessionStream, type StreamCompletion } from './hooks/useSessionStream'
+import { pendingFromDetail } from './utils/approval'
 import { ArrowRight, FileText, ListChecks, SidebarSimple, SquaresFour, TerminalWindow, UsersThree } from '@phosphor-icons/react'
 import './workspace.css'
 import type { SessionDetail, SessionItem } from './types'
@@ -235,8 +236,9 @@ function SessionView({
     error: streamError,
     send,
     regenerate,
-    clearTurn,
+    reconcileTurn,
     pendingApproval,
+    replacedTurnId,
     getStreamGeneration,
     hasActiveStream,
     getCompletion,
@@ -277,14 +279,29 @@ function SessionView({
       const next = await getSessionDetail(sessionId)
       if (request !== detailRequestRef.current || generation !== getStreamGeneration()) return
       setDetail(next)
-      // 必须拿到对应turn的终态才用回放替换；GET失败时保留最后实时快照。
-      if (completion && next.turns.some((turn) => turn.turn_id === completion.turnId && turn.state !== 'running')) {
-        clearTurn(completion)
-      }
+      // 对应轮仍运行时同步审批，终态才替换正文；GET失败保留已显示的部分输出。
+      const current = next.turns.find((turn) => turn.turn_id === completion?.turnId)
+      if (completion && current) reconcileTurn(completion, current, pendingFromDetail(next))
     } catch {
       /* 草稿尚未落盘或网络失败：不清空用户已经看到的内容。 */
     }
-  }, [sessionId, clearTurn, getStreamGeneration])
+  }, [sessionId, reconcileTurn, getStreamGeneration])
+
+  // SSE断线/刷新不会取消后端执行。串行轮询直到终态，发现后续审批且不会重叠GET。
+  // 新流开始或切换会话时取消定时器；已发出的旧GET仍受请求号与代次校验保护。
+  const needsReplayPolling = !isStreaming && (liveTurn?.state === 'running'
+    || detail?.turns.some((turn) => turn.state === 'running'))
+  useEffect(() => {
+    if (!needsReplayPolling) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      await refreshDetail(getCompletion())
+      if (!cancelled) timer = setTimeout(() => void poll(), 1000)
+    }
+    timer = setTimeout(() => void poll(), 1000)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [needsReplayPolling, refreshDetail, getCompletion])
 
   const refreshAfterTurn = useCallback((completion: StreamCompletion) => {
     void refreshDetail(completion)
@@ -300,8 +317,8 @@ function SessionView({
 
   /** 发送消息：模式随提交生效；结束时带着这次流的身份刷新。 */
   const handleSend = useCallback(
-    (text: string, execution: ExecutionDraft) => {
-      void send(text, refreshAfterTurn, execution)
+    (text: string, execution: ExecutionDraft, onAccepted?: () => void) => {
+      void send(text, refreshAfterTurn, execution, onAccepted)
     },
     [send, refreshAfterTurn],
   )
@@ -313,8 +330,9 @@ function SessionView({
 
   /** 错误重试 = 重新生成最后一轮（保留用户消息重跑） */
   const handleRetry = useCallback(() => {
-    void regenerate(refreshAfterTurn)
-  }, [regenerate, refreshAfterTurn])
+    // 新打开的历史会话也必须带上原用户消息；GET失败时可从实时快照恢复。
+    void regenerate(liveTurn ?? detail?.turns.at(-1) ?? null, refreshAfterTurn)
+  }, [regenerate, refreshAfterTurn, liveTurn, detail])
 
   return (
     <>
@@ -322,6 +340,7 @@ function SessionView({
       <ChatArea
         detail={detail}
         liveTurn={liveTurn}
+        replacedTurnId={replacedTurnId}
         isStreaming={isStreaming}
         currentId={sessionId}
         streamError={streamError}

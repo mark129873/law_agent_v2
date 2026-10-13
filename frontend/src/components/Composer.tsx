@@ -10,7 +10,7 @@ export interface ComposerProps {
   disabled?: boolean
   streaming: boolean
   permission: PermissionState
-  onSend: (text: string, execution: ExecutionDraft) => void
+  onSend: (text: string, execution: ExecutionDraft, onAccepted?: () => void) => void
   onStop: () => void
 }
 const MODE_META: Record<string, { label: string; icon: typeof Hand; hint: string }> = {
@@ -27,6 +27,8 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const modeButtonRef = useRef<HTMLButtonElement>(null)
+  // 每次编辑递增；旧请求的确认不能清空用户在等待期间写下的新草稿。
+  const editRevisionRef = useRef(0)
 
   // 仅服务端模式变化时重置草稿；渲染提交前同步，避免 effect 触发额外更新。
   // 正文单独保存，审批回显不会清空用户正在输入的内容。
@@ -53,8 +55,10 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
   const trySend = () => {
     const trimmed = text.trim()
     if (!trimmed || disabled || streaming) return
-    onSend(trimmed, { mode: draftMode })
-    setText('')
+    const revision = editRevisionRef.current
+    onSend(trimmed, { mode: draftMode }, () => {
+      if (editRevisionRef.current === revision) setText('')
+    })
     areaRef.current?.focus()
   }
   const meta = MODE_META[draftMode] ?? MODE_META.build
@@ -64,7 +68,7 @@ export function Composer({ disabled, streaming, permission, onSend, onStop }: Co
   return (
     <div className="composer-shell">
       <div className={`composer-card ${disabled ? 'opacity-60' : ''}`}>
-        <textarea ref={areaRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
+        <textarea ref={areaRef} value={text} onChange={(e) => { editRevisionRef.current += 1; setText(e.target.value) }} onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); trySend() }
         }} rows={2} disabled={disabled} aria-label="消息" placeholder={disabled ? '新建或选择会话开始对话' : '描述你的目标，或继续这段对话…'} className="composer-input block" />
         <div className="mt-3 flex items-center justify-between gap-3">

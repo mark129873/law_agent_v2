@@ -58,7 +58,7 @@ export type WorkItem =
       time: number
     }
 
-export type ToolStatus = 'pending' | 'running' | 'completed' | 'failed' | 'denied'
+export type ToolStatus = 'pending' | 'running' | 'completed' | 'failed' | 'denied' | 'stopped'
 
 export interface TodoItem {
   content: string
@@ -106,7 +106,8 @@ export interface SessionDetail {
 /** SSE 事件（后端 event type 的前端形态） */
 export type SseEvent =
   | { type: 'turn_started'; turn_id: string; started_at: number }
-  | { type: 'delta'; text: string }
+  // message_id标识模型步骤；省略时兼容旧流，不能用于区分不同步骤。
+  | { type: 'delta'; text: string; message_id?: string }
   | { type: 'tool_started'; tool_call_id: string; name: string; input: unknown }
   | {
       type: 'tool_completed'

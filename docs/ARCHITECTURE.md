@@ -50,7 +50,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 ### 3.1 入口与装配
 
 1. 新建会话只返回 draft ID；首次发送才创建 session。
-2. `POST /api/sessions/{id}/turn` 校验模型配置和同会话运行态；提交的模式保存到共享执行状态。
+2. `POST /api/sessions/{id}/turn` 校验模型配置、同会话运行态及未归档状态；只有通过后才保存提交模式。发送和重跑都拒绝已删除会话；尚未落库的 draft 仍可首次发送。
 3. 创建独立数据库Session、TurnRecorder与停止信号；`load_history`重建此前模型历史，追加当前用户输入。
 4. `_turn_sse_response`装配TurnDeps，创建后台pump和Queue；审批与主循环共用该Queue。装配成功后由pump接管资源；此前任一步失败都注销turn并关闭独立数据库Session。
 5. `begin_turn`保存用户message/text part、turn_usage 运行记录，发出turn_started。
@@ -65,7 +65,8 @@ agent/loop.py ── llm / model_call ── 外部模型 API
   3. 响应结束时保存整段text part，并为每个tool_use保存pending工具part。
   4. 无工具：加入assistant历史；Stop返回注入内容则续轮，否则成功结束。
   5. 有工具：加入assistant的text/tool_use块，逐个执行工具，将tool_result作为user内容追加，再调模型。
-- 第40步正常结束仍为success；若仍需第41步，发error并以failed结束。
+- 第40步正常结束仍为success；若仍需第41步，保存错误原因、发error并以failed结束。预算前置拒绝也保存错误消息，刷新后仍可回放。
+- 模型流异常时先保存已收到的正文，再保存错误；错误收口不丢失用户已经看到的部分答案。
 - 工具返回`Error:`作为失败结果回填；明确上下文超限且未输出内容时，安全缩减历史后最多重试一次，失败请求也计入40步；其他模型异常直接failed。
 - 默认hooks只注册PreToolUse/PostToolUse日志；Stop保留注入扩展点，当前默认无注入；UserPromptSubmit尚未接入主链路。
 
@@ -77,10 +78,12 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 | todo_write | await handle_todo_write(deps, message_id, input) | 校验整板、经recorder写 todo 表、返回面板文本和todo_updated事件 |
 | subtask | async for run_subtask_events(...) | 独立模型历史与循环；事件进入父队列，汇总文本作为父工具结果 |
 
-- 工具状态按同一part推进：pending→running→completed/error；失败与拒绝均保存 error，原因存 state.error。
+- 工具状态按同一part推进：pending→running→completed/error；失败与拒绝均保存 error，原因存 state.error。子任务停止保存 stopped、结束时间及部分 output。
+- 命令非零退出统一返回 `Error:` 前缀，上层事件、持久化状态和模型 tool_result 均识别为失败。
 - todo为全量快照，最多20项、最多1项in_progress；todo 表保存当前列表，无自动调度器。
 - 子助手仅7个同步工具，不含todo/subtask；权限沿用父级，与主助手共用三项审批和父会话授权。
 - 子助手内部对话不写独立message序列，只保存父工具结果，子助手卡片由其投影；模型调用另写带subtask_id的model-io。
+- 子模型逐事件检查停止并转发正文；退出时关闭响应流，已收到正文保留，停止状态传回父工具及回放。
 
 ## 4. 数据与状态归属
 
@@ -236,9 +239,12 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - [api/client.ts](../frontend/src/api/client.ts)解析POST响应流；[useSessionStream.ts](../frontend/src/hooks/useSessionStream.ts)归约为实时TurnData。
 - 事件按生命周期、文本、工具、todo/subtask、审批、用量/压缩分组；契约见[types.ts](../frontend/src/types.ts)。
 - 流中工具输出只给400字符预览；流结束后重新GET详情，以数据库回放替换临时状态。GET按请求序号和流代数校验，仅成功取得对应终态回放才清实时轮次；旧响应不能覆盖新turn。
+- 断线可能漏掉turn_completed：流已结束且同代同轮回放为终态时，也清理仍为running的实时快照和旧审批。
+- 断线或刷新后的运行轮每秒串行查询回放；运行中先同步未决审批，保留尚未落盘的实时正文，直到终态替换。新流、终态或卸载结束轮询，旧请求仍受请求号/代次校验。
+- delta附带message_id标识模型步；实时归约按步骤保留过程正文，仅末段放在final_text。工具完成保留已有input和时间。
 - 活跃SSE中的审批成功只刷新权限，审批/后续文本继续由同一流归约；无实时流时才刷新审批回放。
 - 刷新/断线不取消后台turn，但新页面只回放已保存内容，不重新接入原SSE；其他标签同样通过查询回看。
-- 当前tool_started在执行结束后才发；subtask_delta按子模型步聚合发送，不能写成逐token实时推送。
+- 当前tool_started仍在执行结束后才发；subtask_delta按子模型文本事件增量发送。
 
 ## 7. 权限、停止与恢复
 
@@ -247,6 +253,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - local_setting 与 ZCode 对齐八字段：scope、scope_id、namespace、key、value、schema_version、time_created、time_updated；前四项联合主键。
 - scope=project、namespace=permission；mode/ruleset 分行，value 为 JSON，schema_version=1。scope_id 采用 ZCode 目录 slug：小写、非字母数字及 ._- 转连字符、去首尾连字符、最多80字符。与 session.project_id 一致。
 - 规则使用 toolName/ruleContent；无多项目界面。旧权限 JSON 不读取、不迁移。
+- 项目规则的星号通配要求完整匹配主体，非星号字符保持字面含义；`cmd:*` 仍采用命令词边界前缀语义。
 
 - evaluate读取共享模式/规则，返回allow/deny/ask。
 - 命令免批仅接受单行字面量与已知只读参数；换行、展开/子表达式、复杂语法及未知 Git 选项转审批，不能靠根词免批。
@@ -255,7 +262,7 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 - 文件会话范围为工具＋safe_path 规范化目标（其余未知参数精确匹配）；命令完整参数精确匹配，不生成前缀；其他工具完整 input 精确匹配。
 - API 原子校验 session、未决状态和选项；只唤醒决定。等待方退出停止/取消检查后才写内存允许范围，并发 approval_resolved；不改 local_setting。刷新保留选项，重启不恢复审批/授权。
 - 审批等待同时监听停止；停止撤销待决请求，迟到批准失效，主/子工具执行前复查停止；拒绝理由作为Error工具结果回填。
-- 普通文件工具经safe_path限制于workspace；glob未使用同等检查，PowerShell仅固定cwd，没有系统级隔离。
+- 普通文件工具经safe_path限制于workspace；glob预检相对模式和固定前缀，并在输出前逐项检查解析后的路径，拒绝父级、绝对路径及越界符号链接。PowerShell仅固定cwd，没有系统级隔离。
 
 ### 结束与恢复
 
@@ -300,3 +307,5 @@ agent/loop.py ── llm / model_call ── 外部模型 API
 
 - 审批回放转换独立于组件导出，保留热更新边界。
 - 权限模式、工作块展开状态仅在对应输入变化时同步；不在 effect 中追加状态更新。
+- 发送草稿在建轮确认前保留；确认只清理原编辑版本，避免覆盖等待期间的新草稿。重跑复用原用户消息并替换原轮实时显示。
+- 失败轮次即使没有过程条目也显示状态和重试入口；实时error事件与持久化错误均可内联呈现。

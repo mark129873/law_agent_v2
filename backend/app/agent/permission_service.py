@@ -16,7 +16,7 @@
 
 import re
 
-from app.agent.tools import safe_path
+from app.agent.tools import safe_glob_pattern, safe_path
 from app.config import settings
 
 # ---------- 硬拒清单（原 permissions.py 移植；命中即拒，不弹窗） ----------
@@ -119,6 +119,11 @@ def hard_deny_reason(tool_name: str, tool_input: dict) -> str | None:
             safe_path(str(tool_input.get("path", "")))
         except ValueError as exc:
             return str(exc)
+    if tool_name == "glob":
+        try:
+            safe_glob_pattern(str(tool_input.get("pattern", "")))
+        except (ValueError, OSError, RuntimeError) as exc:
+            return str(exc)
     return None
 
 
@@ -142,16 +147,9 @@ def _match_content(content: str, subject: str) -> bool:
         prefix = content[:-2]
         return subject == prefix or subject.startswith(prefix + " ") or subject.startswith(prefix + "\t")
     if "*" in content:
-        parts = content.split("*")
-        if not subject.startswith(parts[0]):
-            return False
-        cursor = len(parts[0])
-        for part in parts[1:]:
-            idx = subject.find(part, cursor)
-            if idx < 0:
-                return False
-            cursor = idx + len(part)
-        return True
+        # 仅星号具有通配含义，其他字符仍按字面量；完整匹配防止 .md 允许 .md.exe。
+        pattern = ".*".join(re.escape(part) for part in content.split("*"))
+        return re.fullmatch(pattern, subject, flags=re.DOTALL) is not None
     return subject == content
 
 

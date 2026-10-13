@@ -299,5 +299,13 @@
     "scope": "固定三项审批；精确范围的进程内会话授权；项目模式/ruleset兼容；API归属、重放和停止保护",
     "evidence": "后端266过；前端11项回归、typecheck/lint/build过，主包359.12kB；隔离启动health/空列表/build通过。云浏览器真App＋假SSE验证三项、续流/拒绝、刷新恢复和旧GET竞态，5截图。",
     "boundaries": "同session跨turn/刷新有效，重启/删除清空；命令不生成前缀。保留原yolo优先级；README/schema不改；无真实模型调用，Windows实机未验。未commit/push，待父级发布。"
+  },
+  "review_regressions": {
+    "date": "2026-10-13",
+    "baseline": "c9c2989",
+    "status": "passing",
+    "scope": "修复最新main审查的12项异常场景，保留六表与三项审批契约",
+    "evidence": "后端294过（新增28）；前端27过（新增16），type/lint/build过，主包360.53kB；Chromium19场景及8截图通过；隔离HTTP/重启/重跑/删除拒绝、标准启动退出通过；原数据哈希不变。",
+    "boundaries": "仅Fake/Mock模型；无真实DeepSeek、Windows或负载测试；README/schema/依赖不改；用户授权推送修复分支，不直接改main。停止在下一事件检查，PowerShell无系统沙箱。"
   }
 }

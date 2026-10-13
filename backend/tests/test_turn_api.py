@@ -51,7 +51,8 @@ def test_turn_sse_success(client) -> None:
     assert kinds[0] == "turn_started"
     assert kinds[-1] == "turn_completed"
     assert events[-1]["state"] == "success"
-    assert {"type": "delta", "text": "你好呀"} in events
+    delta = next(e for e in events if e["type"] == "delta")
+    assert delta["text"] == "你好呀" and delta["message_id"]
     assert any(e["type"] == "token_count" and e["output_tokens"] == 4 for e in events)
 
     detail = client.get(f"/api/sessions/{sid}").json()

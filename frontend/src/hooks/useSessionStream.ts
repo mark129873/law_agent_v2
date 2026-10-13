@@ -3,7 +3,7 @@
  *
  * 设计（对应 ZCode 桌面端的工作块归属）：
  * - 实时 turn 与回放 turn 用同一种数据形状（TurnData），渲染组件完全复用；
- * - delta 文本累积为 final_text 的"生成中草稿"（最后一条 assistant 正文在块外）；
+ * - delta 按 message_id 分步，末条正文为 final_text，前面各步的正文放回工作块；
  * - 工具/审批/任务板/子助手事件按序追加进 work_items（块内条目）；
  * - 事件里出现 turn_completed 后，调用方应重新拉取会话详情，
  *   以落盘事实为准替换实时 turn（耗时等切换为权威值）。
@@ -36,11 +36,16 @@ export function useSessionStream(sessionId: string | null) {
   const [error, setError] = useState<string | null>(null)
   // 未决审批（FE-4 弹窗数据源）：approval_request 置入，approval_resolved 清除
   const [pendingApproval, setPendingApproval] = useState<LivePendingApproval | null>(null)
+  const [replacedTurnId, setReplacedTurnId] = useState<string | null>(null)
 
   // 用 ref 持有正在构建的 turn，避免闭包读到旧状态
   const turnRef = useRef<TurnData | null>(null)
-  // 本轮发送的文本：turn_started 到达时用于立即显示用户气泡
-  const sentTextRef = useRef('')
+  // 保留用户消息身份：重跑仍属于原消息，界面才能用新轮替换旧回复。
+  const sentUserRef = useRef<TurnData['user_message']>(null)
+  // 记住末段正文原来的位置；新模型步产生文字时，把上一段放回工具之前。
+  const textStepRef = useRef<{ id: string; index: number; time: number } | null>(null)
+  // 重跑可能发生在回放尚未返回时，原用户ID仍为local，另存旧轮ID作替换依据。
+  const replacementRef = useRef<string | null>(null)
   // ref 在发送当下立即更新；React尚未重渲染时也能拒绝重复发送，并让旧GET失效。
   const streamingRef = useRef(false)
   const generationRef = useRef(0)
@@ -71,15 +76,29 @@ export function useSessionStream(sessionId: string | null) {
             started_at: event.started_at,
             ended_at: null,
             active_ms: null,
-            user_message: { id: 'local', text: sentTextRef.current, time: Date.now() },
+            user_message: sentUserRef.current,
             work_items: [],
             final_text: null,
           }
+          textStepRef.current = null
+          setReplacedTurnId(replacementRef.current)
           setTurn({ ...turnRef.current })
           break
 
         case 'delta':
-          if (cur) {
+          if (cur && event.text) {
+            const stepId = event.message_id ?? 'legacy'
+            const previous = textStepRef.current
+            if (previous?.id !== stepId) {
+              // 与回放一致：只有出现下一条正文，上一条才成为过程说明。
+              // 下一步无文字或失败时，上一条仍保留为最终/部分输出。
+              if (previous && cur.final_text) {
+                const item: WorkItem = { kind: 'text', id: previous.id, text: cur.final_text, time: previous.time }
+                cur.work_items = [...cur.work_items.slice(0, previous.index), item, ...cur.work_items.slice(previous.index)]
+              }
+              cur.final_text = null
+              textStepRef.current = { id: stepId, index: cur.work_items.length, time: Date.now() }
+            }
             cur.final_text = (cur.final_text ?? '') + event.text
             setTurn({ ...cur })
           }
@@ -103,14 +122,16 @@ export function useSessionStream(sessionId: string | null) {
             const idx = cur.work_items.findIndex(
               (x) => x.kind === 'tool_call' && x.id === event.tool_call_id,
             )
+            const previous = cur.work_items[idx]
             const item: WorkItem = {
               kind: 'tool_call',
               id: event.tool_call_id,
               name: event.name,
-              input: undefined,
+              // 完成事件只带输出预览，不能抹掉开始时已有的参数和顺序时间。
+              input: previous?.kind === 'tool_call' ? previous.input : undefined,
               status: event.status,
               output: event.output_preview,
-              time: Date.now(),
+              time: previous?.time ?? Date.now(),
             }
             cur.work_items =
               idx >= 0
@@ -213,6 +234,7 @@ export function useSessionStream(sessionId: string | null) {
 
         case 'error':
           setError(event.message)
+          appendItem({ kind: 'error', id: `error-${Date.now()}`, message: event.message, time: Date.now() })
           break
 
         case 'turn_completed':
@@ -231,9 +253,9 @@ export function useSessionStream(sessionId: string | null) {
     [appendItem],
   )
 
-  /** 发送用户消息：立即本地显示用户气泡，随后消费 SSE 流（execution 随提交生效） */
+  /** 发送用户消息：确认建轮后显示用户气泡并清稿（execution 随提交生效）。 */
   const send = useCallback(
-    async (text: string, onFinished?: (completion: StreamCompletion) => void, execution?: ExecutionDraft) => {
+    async (text: string, onFinished?: (completion: StreamCompletion) => void, execution?: ExecutionDraft, onAccepted?: () => void) => {
       if (!sessionId || streamingRef.current) return
       streamingRef.current = true
       const generation = ++generationRef.current
@@ -241,11 +263,16 @@ export function useSessionStream(sessionId: string | null) {
       setPendingApproval(null)
       pendingApprovalRef.current = null
       setIsStreaming(true)
-      sentTextRef.current = text
-      turnRef.current = null
+      sentUserRef.current = { id: 'local', text, time: Date.now() }
+      replacementRef.current = null
+      // 收到新turn_started前保留旧轮身份；409等拒绝不能让断线旧轮失去回放收尾依据。
 
       try {
-        await streamTurn(sessionId, text, applyEvent, execution)
+        await streamTurn(sessionId, text, (event) => {
+          applyEvent(event)
+          // 建轮确认前保留草稿，网络/HTTP失败时用户可以直接重发。
+          if (event.type === 'turn_started') onAccepted?.()
+        }, execution)
       } catch (e) {
         // 连接中断：turn 在后端继续跑，界面提示可刷新回看
         setError(e instanceof Error ? e.message : '连接中断，可稍后刷新回看进度')
@@ -258,19 +285,26 @@ export function useSessionStream(sessionId: string | null) {
     [sessionId, applyEvent, getCompletion],
   )
 
-  /** 仅允许对应终态回放收尾；审批刷新或旧GET不能清掉正在消费的流。 */
-  const clearTurn = useCallback((completion: StreamCompletion) => {
+  /** 断线后用同轮回放同步审批；仅终态清掉正文快照，仍在消费的流由SSE负责。 */
+  const reconcileTurn = useCallback((completion: StreamCompletion, replay: TurnData, pending: LivePendingApproval | null) => {
     if (streamingRef.current || generationRef.current !== completion.generation
-        || turnRef.current?.turn_id !== completion.turnId || turnRef.current?.state === 'running') return
+        || turnRef.current?.turn_id !== completion.turnId
+        || replay.turn_id !== completion.turnId) return
+    // 批准后模型可能仍在运行；立即采用服务端的下一审批或空值，旧弹窗不能占位。
+    setPendingApproval(pending)
+    pendingApprovalRef.current = pending
+    if (replay.state === 'running') return
+    // 断线可能漏掉turn_completed；同代同轮的终态回放可以收掉仍显示running的快照。
     turnRef.current = null
     setTurn(null)
     setPendingApproval(null)
     pendingApprovalRef.current = null
+    setReplacedTurnId(null)
   }, [])
 
   /** 重新生成（错误重试同机制）：回滚最后一轮回复并重跑，事件走同一归约器 */
   const regenerate = useCallback(
-    async (onFinished?: (completion: StreamCompletion) => void) => {
+    async (source: TurnData | null, onFinished?: (completion: StreamCompletion) => void) => {
       if (!sessionId || streamingRef.current) return
       streamingRef.current = true
       const generation = ++generationRef.current
@@ -278,7 +312,9 @@ export function useSessionStream(sessionId: string | null) {
       setPendingApproval(null)
       pendingApprovalRef.current = null
       setIsStreaming(true)
-      turnRef.current = null
+      sentUserRef.current = source?.user_message ?? null
+      replacementRef.current = source?.turn_id ?? null
+      // 重跑被服务端拒绝时，旧快照与身份一并保留，仍可继续恢复其终态。
 
       try {
         await streamRegenerate(sessionId, applyEvent)
@@ -293,5 +329,5 @@ export function useSessionStream(sessionId: string | null) {
     [sessionId, applyEvent, getCompletion],
   )
 
-  return { turn, isStreaming, error, send, regenerate, clearTurn, pendingApproval, getStreamGeneration, hasActiveStream, getCompletion }
+  return { turn, isStreaming, error, send, regenerate, reconcileTurn, pendingApproval, replacedTurnId, getStreamGeneration, hasActiveStream, getCompletion }
 }

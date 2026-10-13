@@ -1,6 +1,15 @@
 # 会话交接
 
-## 最新（2026-10-12，Session 018）
+## 最新（2026-10-13，Session 019）
+
+- 基于远端 main c9c2989 修复审查的全部 12 项异常场景，详见 [review-regressions.md](review-regressions.md)。README、六表 schema 与依赖不改。
+- 后端：已删会话拒绝发送/重跑；部分正文与前置错误可回放；子任务增量/停止；glob 和项目规则边界；命令退出状态。
+- 前端：断线审批同步及串行回放轮询；失败草稿保留；工具参数、重跑替换、多步正文、空失败轮重试。delta 新增可选 message_id；停止工具新增 stopped 状态。
+- 验证：后端294过，前端27过，type/lint/build通过；Chromium19场景、8截图通过；隔离HTTP/重启/重跑/删除拒绝、标准启动/代理/Ctrl+C清理通过。独立复核无阻塞。
+- 工件：tmp/fix-review-regressions/。无真实模型调用；原数据库/日志哈希未变，测试服务与临时库均清理。
+- 交付：fix/review-regressions 分支提交；用户追加授权推送同名远端分支，不直接改 main；具体提交见 git log。Windows/真实DeepSeek/负载性能未验，子模型停止仍在下一事件检查。
+
+## 历史（2026-10-12，Session 018）
 
 - 三项审批已实现：allowOnce/allowSession/deny；审批不改项目模式/ruleset。README/schema不改。
 - 会话授权仅内存，文件绑定工具＋规范路径；命令和其他工具完整参数精确匹配。跨turn/刷新保留，重启/删除清空；父子共用所属session。
@@ -72,7 +81,7 @@
 
 | 工具呈现 | tool_started在执行结束后才发；自动放行无审批事实 | loop.py |
 | 压缩观测 | 入口未继承上一轮usage；摘要调用未记model-io/用量；当前轮过大明确失败 | api/sessions.py、compact.py |
-| 路径 | PowerShell无系统沙箱，glob未过safe_path | permission_service.py、tools.py |
+| 路径 | PowerShell无系统沙箱；glob模式和解析结果现已校验工作区边界 | permission_service.py、tools.py |
 
 既有限制：长会话全量回放；PowerShell 无系统沙箱。
 
